@@ -1,0 +1,32 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: driftshield-postgres
+    environment:
+      POSTGRES_DB: driftshield
+      POSTGRES_USER: driftshield
+      POSTGRES_PASSWORD: driftshield
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - driftshield-network
+
+  backend:
+    build: .
+    container_name: driftshield-backend
+    depends_on:
+      - postgres
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./driftshield-data/runtime:/app/driftshield-data/runtime
+    networks:
+      - driftshield-network
+
+networks:
+  driftshield-network:
+
+volumes:
+  postgres_data:

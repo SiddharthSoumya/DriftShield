@@ -1,0 +1,2 @@
+{ssh_port: blocked, firewall_enabled: true, public_access: false, admin_endpoint_exposed: false,
+  max_requests_per_minute: 100}
