@@ -1,0 +1,20 @@
+spring:
+  datasource:
+    url: jdbc:postgresql://driftshield-postgres:5432/driftshield
+    username: driftshield
+    password: driftshield
+
+  jpa:
+    hibernate:
+      ddl-auto: update
+    show-sql: false
+    properties:
+      hibernate:
+        format_sql: true
+
+logging:
+  level:
+    org.hibernate.SQL: OFF
+
+server:
+  port: 8080
