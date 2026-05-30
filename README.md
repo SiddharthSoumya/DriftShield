@@ -145,7 +145,7 @@ http://localhost:5173
 *Add project screenshots here*
 
 ```md id="f3kqwf"
-![Dashboard Screenshot]()
+![Dashboard Screenshot](https://github.com/SiddharthSoumya/DriftShield/blob/main/DriftShield_Dashboard.png)
 ```
 
 ## Demo Video
@@ -153,7 +153,7 @@ http://localhost:5173
 *Add your demo video link here*
 
 ```md id="9z5q4d"
-[Watch Demo Video]()
+[Watch Demo Video](https://youtu.be/d1kuxFRCc8o)
 ```
 
 ---
