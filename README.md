@@ -140,21 +140,15 @@ http://localhost:5173
 
 # 📸 Screenshots / Demo
 
-## Dashboard Preview
+# 📸 Dashboard Preview
 
-*Add project screenshots here*
+![Dashboard Screenshot](https://raw.githubusercontent.com/SiddharthSoumya/DriftShield/main/DriftShield_Dashboard.png)
 
-```md id="f3kqwf"
-![Dashboard Screenshot](https://github.com/SiddharthSoumya/DriftShield/blob/main/DriftShield_Dashboard.png)
-```
+---
 
-## Demo Video
+# 🎥 Demo Video
 
-*Add your demo video link here*
-
-```md id="9z5q4d"
-[Watch Demo Video](https://youtu.be/d1kuxFRCc8o)
-```
+[![Watch the Demo](https://img.youtube.com/vi/d1kuxFRCc8o/maxresdefault.jpg)](https://youtu.be/d1kuxFRCc8o)
 
 ---
 
