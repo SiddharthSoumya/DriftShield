@@ -151,6 +151,11 @@ http://localhost:5173
 [![Watch the Demo](https://img.youtube.com/vi/d1kuxFRCc8o/maxresdefault.jpg)](https://youtu.be/d1kuxFRCc8o)
 
 ---
+# 🖼️ Project Poster
+
+[![DriftShield Poster](https://raw.githubusercontent.com/SiddharthSoumya/DriftShield/main/poster-preview.png)](https://github.com/SiddharthSoumya/DriftShield/blob/main/CODORRA%202026.pdf)
+
+---
 
 # 🧠 How DriftShield Works
 
