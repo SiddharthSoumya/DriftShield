@@ -1,0 +1,15 @@
+:root{
+    --primary-bg: #0085ef;
+    --secondary-bg: #2E3944;
+    --accent-dark: #124E66;
+    --accent-light: #748D92;
+    --text-main: #00d422;
+}
+
+body{
+    margin: 0;
+    padding: 0;
+    background-color: var(--primary-bg);
+    color: var(--text-main);
+    font-family: "Inter", sans-serif;
+}
