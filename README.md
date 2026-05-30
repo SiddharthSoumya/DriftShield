@@ -153,7 +153,7 @@ http://localhost:5173
 ---
 # 🖼️ Project Poster
 
-[![DriftShield Poster](https://raw.githubusercontent.com/SiddharthSoumya/DriftShield/main/poster-preview.png)](https://canva.link/vshp4t17rvrylyj)
+[![DriftShield Poster](https://raw.githubusercontent.com/SiddharthSoumya/DriftShield/main/poster-preview.png)](https://canva.link/ln4opcenpf5iu1m)
 
 ---
 
