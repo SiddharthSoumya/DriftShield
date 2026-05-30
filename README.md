@@ -153,7 +153,7 @@ http://localhost:5173
 ---
 # 🖼️ Project Poster
 
-[![DriftShield Poster](https://raw.githubusercontent.com/SiddharthSoumya/DriftShield/main/poster-preview.png)](https://github.com/SiddharthSoumya/DriftShield/blob/main/CODORRA_2026.pdf)
+[![DriftShield Poster](https://raw.githubusercontent.com/SiddharthSoumya/DriftShield/main/poster-preview.png)]((https://canva.link/ln4opcenpf5iu1m))
 
 ---
 
