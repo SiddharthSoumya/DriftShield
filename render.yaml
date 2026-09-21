@@ -5,15 +5,38 @@ services:
     dockerContext: ./backend/backend
     dockerfilePath: ./backend/backend/Dockerfile
     plan: free
+
     envVars:
       - key: PORT
         value: 8080
-      - key: DB_URL
+
+      - key: DB_HOST
         fromDatabase:
           name: driftshield-db
-          property: connectionString
+          property: host
+
+      - key: DB_PORT
+        fromDatabase:
+          name: driftshield-db
+          property: port
+
+      - key: DB_NAME
+        fromDatabase:
+          name: driftshield-db
+          property: database
+
+      - key: DB_USERNAME
+        fromDatabase:
+          name: driftshield-db
+          property: user
+
+      - key: DB_PASSWORD
+        fromDatabase:
+          name: driftshield-db
+          property: password
+
       - key: CORS_ALLOWED_ORIGINS
-        value: https://*.onrender.com,https://*.netlify.app,https://*.vercel.app,https://*.github.dev
+        value: https://driftshield-frontend.onrender.com
 
   - type: web
     name: driftshield-frontend
@@ -21,11 +44,12 @@ services:
     dockerContext: ./frontend
     dockerfilePath: ./frontend/Dockerfile
     plan: free
+
     envVars:
       - key: VITE_API_BASE_URL
         value: https://driftshield-backend.onrender.com
 
- databases:
+databases:
   - name: driftshield-db
     databaseName: driftshield
     user: driftshield
