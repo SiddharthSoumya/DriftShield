@@ -193,6 +193,96 @@ http://localhost:5173
   
 ---
 
+# � Render Deployment Guide (Free Tier)
+
+This project is ready for a free Render deployment with a managed Postgres database and secure environment variables.
+
+## 1) Create a free Postgres database
+
+1. Sign in to Render.
+2. Click New + -> Postgres.
+3. Pick a name like `driftshield-db`.
+4. Choose the Free plan.
+5. Select a region close to your users.
+6. Create the database.
+
+Render will provide your database connection details. Keep the generated connection string private.
+
+## 2) Set secure environment variables
+
+Use the Render dashboard for each web service instead of hardcoding secrets in source control.
+
+Backend service env vars:
+
+- `PORT=8080`
+- `DB_URL=<your-render-postgres-connection-string>`
+- `CORS_ALLOWED_ORIGINS=https://*.onrender.com,https://*.netlify.app,https://*.vercel.app,https://*.github.dev`
+
+Frontend service env vars:
+
+- `VITE_API_BASE_URL=https://<your-backend-service>.onrender.com`
+
+Important:
+- Never commit `.env` files with real secrets.
+- Use Render env vars or a local `.env` file only for development.
+- Keep the database password and connection string private.
+
+## 3) One-click deploy with Render Blueprint
+
+This repo includes a Render blueprint at [render.yaml](render.yaml).
+
+You can deploy immediately by clicking:
+
+https://render.com/deploy?repo=https://github.com/<your-github-username>/DriftShield
+
+If you prefer the dashboard flow:
+
+1. Push this repository to GitHub.
+2. In Render, click New + -> Blueprint.
+3. Connect the repository.
+4. Render will create the backend, frontend, and free Postgres database automatically.
+
+## 4) Local development
+
+Backend:
+
+```bash
+cd backend/backend
+./mvnw spring-boot:run
+```
+
+Frontend:
+
+```bash
+cd frontend
+npm install
+npm run dev -- --host
+```
+
+## 5) Production notes
+
+- Backend uses H2 by default for local development when no DB is configured.
+- In Render, the app prefers `DB_URL` / `DATABASE_URL` and will use the Postgres connection string automatically.
+- Frontend is served as a static build through Nginx for a lightweight production deployment.
+
+## 6) Secure GitHub Actions deploy workflow
+
+This repo includes a CI/CD workflow at [.github/workflows/render-deploy.yml](.github/workflows/render-deploy.yml) that validates the app and deploys both services to Render.
+
+Secrets to add in GitHub:
+
+- `RENDER_API_KEY`
+- `RENDER_SERVICE_ID_BACKEND`
+- `RENDER_SERVICE_ID_FRONTEND`
+
+How to get them:
+
+1. In Render, open your account settings and create an API key.
+2. Copy the service IDs from the Render dashboard URLs for each service.
+3. Add the values as GitHub repository secrets under Settings -> Secrets and variables -> Actions.
+
+Once configured, pushes to `main` will run the validation build and trigger both Render deployments automatically.
+
 # 📜 License
 
 This project was built for educational and hackathon purposes.
