@@ -133,6 +133,14 @@ def accept_pilot(target, payload, now):
             raise RateLimited(ceil(remaining))
 
     coverage = payload["coverage"]
+    missed = deadline(target, enrollment)
+    if coverage == "complete":
+        gap = CoverageGap.objects.filter(target=target, ended_at=None).first()
+        cutoff = gap.started_at if gap else None
+        if missed is not None and now >= missed:
+            cutoff = max(cutoff, missed) if cutoff else missed
+        if cutoff is not None and captured <= cutoff:
+            raise IntakeConflict("before_coverage_gap", "Collect a new observation after the coverage gap began.")
     item = Delivery.objects.create(
         target=target, identifier=delivery, captured_at=captured, received_at=now, started_at=started,
         status=coverage, coverage=coverage, payload_hash=payload_hash, failure_code=payload.get("error", ""),
@@ -142,12 +150,8 @@ def accept_pilot(target, payload, now):
     previous_error = target.last_error
     target.last_attempt = target.last_contact_at = now
     if coverage == "complete":
-        missed = deadline(target, enrollment)
-        if missed is not None and captured > missed:
+        if missed is not None and now >= missed:
             open_gap(target, missed, "stale")
-        open_interval = CoverageGap.objects.filter(target=target, ended_at=None).first()
-        if open_interval and captured <= open_interval.started_at:
-            raise IntakeConflict("before_coverage_gap", "Collect a new observation after the coverage gap began.")
         target.last_complete_delivery = item
         target.last_success = captured
         target.last_error = ""
@@ -161,7 +165,6 @@ def accept_pilot(target, payload, now):
     else:
         target.last_error = f"{coverage}:{item.failure_code}"
         target.save(update_fields=["last_attempt", "last_contact_at", "last_error"])
-        missed = deadline(target, enrollment)
         if missed is not None and missed < min(captured, now):
             open_gap(target, missed, "stale")
         open_gap(target, min(captured, now), coverage, item, actor="collector")

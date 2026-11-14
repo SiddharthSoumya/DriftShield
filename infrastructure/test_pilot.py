@@ -276,6 +276,25 @@ class PilotWorkflowTests(PilotFixture, TestCase):
         self.assertEqual(CoverageGap.objects.get().opened_reason, "stale")
         self.assertEqual(CoverageGap.objects.get().ended_reason, "restored")
 
+    def test_deadline_intake_is_independent_of_sweep_order(self):
+        self.assertEqual(self.report(self.payload(1)).status_code, 200)
+        elapsed = 35 * 60 + 1
+        deadline = self.now + timedelta(seconds=elapsed)
+        at_deadline = self.payload(elapsed)
+        early_capture = self.payload(elapsed - 1)
+        for payload in (at_deadline, early_capture):
+            self.assertEqual(self.report(payload, second=elapsed).json()["code"], "before_coverage_gap")
+        self.assertFalse(CoverageGap.objects.exists())
+        pilot_intake.check_pilot_gaps(deadline)
+        for payload in (at_deadline, early_capture):
+            self.assertEqual(self.report(payload, second=elapsed).json()["code"], "before_coverage_gap")
+        self.assertEqual(Delivery.objects.count(), 1)
+        self.assertEqual(self.report(self.payload(elapsed + 1), second=elapsed + 2).status_code, 200)
+        gap = CoverageGap.objects.get()
+        self.assertEqual(gap.started_at, deadline)
+        self.assertEqual(gap.ended_at, deadline + timedelta(seconds=1))
+        self.assertEqual(Notification.objects.count(), 1)
+
     def test_baseline_requires_distinct_owner_and_complete_current_data(self):
         self.report(self.payload(1))
         self.action("request_baseline", at=21)
