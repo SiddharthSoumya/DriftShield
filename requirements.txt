@@ -1,0 +1,8 @@
+Django==5.2.19
+asgiref==3.13.0
+sqlparse==0.6.1
+psycopg[binary]==3.3.9
+whitenoise==6.12.0
+gunicorn==26.2.0
+httpx==0.28.1
+cryptography==50.0.0

@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block title %}Sign in · DriftShield{% endblock %}
+{% block content %}
+<section class="login panel">
+  <h1>Sign in</h1>
+  <p>Access your repository monitoring workspace.</p>
+  {% if throttled %}<p class="notice error" role="alert">Too many sign-in attempts. Try again in ten minutes.</p>{% endif %}
+  <form method="post" class="stack">{% csrf_token %}
+    {{ form.non_field_errors }}
+    <label for="{{ form.username.id_for_label }}">Username</label>{{ form.username }}
+    <label for="{{ form.password.id_for_label }}">Password</label>{{ form.password }}
+    <input type="hidden" name="next" value="{{ next }}">
+    <button class="primary">Sign in</button>
+  </form>
+</section>
+{% endblock %}

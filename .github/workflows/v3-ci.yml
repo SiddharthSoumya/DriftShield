@@ -1,0 +1,75 @@
+name: DriftShield v3
+on:
+  pull_request:
+  push:
+    branches: [main, driftshield-v3]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: driftshield
+          POSTGRES_USER: driftshield
+          POSTGRES_PASSWORD: ci-only-password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U driftshield"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DS_DEV: '1'
+      DS_DB_NAME: driftshield
+      DS_DB_USER: driftshield
+      DS_DB_PASSWORD: ci-only-password
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - run: python -m pip install -r requirements.txt
+      - run: python manage.py makemigrations --check --dry-run
+      - run: python manage.py test -v 2
+      - run: python -m compileall -q driftshield governance
+      - run: for script in deploy/install.sh deploy/driftshieldctl deploy/service-launch; do bash -n "$script"; done
+      - name: Check production settings
+        env:
+          DS_DEV: '0'
+          DS_ORIGIN: https://driftshield.example.test
+          DS_SECRET_KEY: ci-only-8c7a5ebbf750b061d62962048e4ea06c126f75468c40f03f3fd0d4dc
+        run: |
+          python manage.py check --deploy --fail-level WARNING
+          python manage.py collectstatic --no-input
+      - name: Install and upgrade systemd services
+        shell: bash
+        run: |
+          set -euo pipefail
+          python_bin="$(command -v python)"
+          sudo env DRIFTSHIELD_PYTHON="$python_bin" bash deploy/install.sh
+          sudo sed -i 's|^DS_ORIGIN=.*|DS_ORIGIN=https://driftshield.example.test|; s|^DS_DB_PASSWORD=.*|DS_DB_PASSWORD=ci-only-password|' /etc/driftshield/service.env
+          sudo env DRIFTSHIELD_PYTHON="$python_bin" bash deploy/install.sh
+          sudo systemd-analyze verify /etc/systemd/system/driftshield-web.service /etc/systemd/system/driftshield-worker.service
+          curl --retry 10 --retry-connrefused --retry-delay 1 -fsS http://127.0.0.1:8000/healthz
+          previous="$(readlink /opt/driftshield/current)"
+          sudo env DRIFTSHIELD_PYTHON="$python_bin" bash deploy/install.sh
+          test "$(readlink /opt/driftshield/current)" != "$previous"
+          sudo systemctl is-active driftshield-web driftshield-worker
+          curl --retry 10 --retry-connrefused --retry-delay 1 -fsS http://127.0.0.1:8000/healthz
+          for attempt in {1..10}; do
+            if sudo driftshieldctl shell -c 'from governance.models import WorkerHealth; assert WorkerHealth.objects.filter(name="worker").exists()'; then
+              exit 0
+            fi
+            sleep 1
+          done
+          exit 1
+      - name: Show service logs on failure
+        if: failure()
+        run: sudo journalctl -u driftshield-web -u driftshield-worker -n 80 --no-pager

@@ -1,0 +1,22 @@
+[Unit]
+Description=DriftShield repository scan and email worker
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=driftshield
+Group=driftshield
+WorkingDirectory=/opt/driftshield/current
+ExecStart=/opt/driftshield/current/service-launch worker
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=100
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target
