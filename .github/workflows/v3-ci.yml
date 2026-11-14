@@ -91,3 +91,51 @@ jobs:
               python -c 'import json, sys; assert json.load(sys.stdin)["status"] == "unbaselined"'
           done
           sudo driftshieldctl shell -c 'from infrastructure.models import Target, Delivery; assert Target.objects.get(name="billing").revision == 1; assert Delivery.objects.count() == 1'
+  collector-smoke:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        engine: [terraform, tofu]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: hashicorp/setup-terraform@v3
+        if: matrix.engine == 'terraform'
+        with:
+          terraform_version: '1.11.4'
+          terraform_wrapper: false
+      - uses: opentofu/setup-opentofu@v1
+        if: matrix.engine == 'tofu'
+        with:
+          tofu_version: '1.9.1'
+          tofu_wrapper: false
+      - name: Collect a real refresh-only plan
+        shell: bash
+        env:
+          IAC_CLI: ${{ matrix.engine }}
+        run: |
+          set -euo pipefail
+          work="$(mktemp -d)"
+          trap 'rm -rf "$work"' EXIT
+          printf '%s\n' 'resource "terraform_data" "demo" { input = "approved" }' > "$work/main.tf"
+          "$IAC_CLI" -chdir="$work" init -input=false
+          "$IAC_CLI" -chdir="$work" apply -input=false -auto-approve
+          "$IAC_CLI" -chdir="$work" plan -refresh-only -input=false -out=plan
+          "$IAC_CLI" -chdir="$work" show -json plan > "$work/plan.json"
+          python -m collector terraform --scope local-ci --file "$work/plan.json" --preview |
+            python -c 'import json, sys; assert json.load(sys.stdin)["resources"] == {}'
+      - name: Collect a real Docker configuration change
+        if: matrix.engine == 'terraform'
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker create --name driftshield-ci --memory 128m busybox:1.37
+          trap 'docker rm -f driftshield-ci' EXIT
+          inspect() {
+            python -m collector docker --scope ci --context default --container driftshield-ci --preview
+          }
+          inspect | python -c 'import json, sys; assert json.load(sys.stdin)["resources"]["container/driftshield-ci"]["memory_bytes"] == 134217728'
+          docker update --memory 256m driftshield-ci
+          inspect | python -c 'import json, sys; assert json.load(sys.stdin)["resources"]["container/driftshield-ci"]["memory_bytes"] == 268435456'
