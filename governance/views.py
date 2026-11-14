@@ -3,6 +3,8 @@ from datetime import timedelta
 from functools import wraps
 import hashlib
 import json
+from ipaddress import ip_address
+import unicodedata
 
 import httpx
 from cryptography.fernet import InvalidToken
@@ -26,26 +28,40 @@ from .github import CollectionError, FIELDS, GitHub, cipher, repo_name, signing_
 from .models import Audit, Baseline, Incident, Integration, LoginAttempt, Membership, Monitor, Notification, Scan, WorkerHealth, Workspace
 
 
+def login_client(request):
+    peer = request.META.get("REMOTE_ADDR", "")
+    if settings.DS_TRUST_PROXY_CLIENT_IP and peer in ("127.0.0.1", "::1"):
+        try:
+            return str(ip_address(request.headers.get("X-DriftShield-Client-IP", "")))
+        except ValueError:
+            pass
+    return peer
+
+
 class WorkspaceLogin(LoginView):
     template_name = "login.html"
     redirect_authenticated_user = True
 
     def post(self, request, *args, **kwargs):
-        username = request.POST.get("username", "")[:150].casefold()
-        ip = request.META.get("REMOTE_ADDR", "")
-        keys = sorted({hashlib.sha256(value.encode()).hexdigest() for value in ("ip:" + ip, "user:" + username)})
+        username = unicodedata.normalize("NFKC", request.POST.get("username", "").strip()).casefold()[:150]
+        ip = login_client(request)
+        user_key = hashlib.sha256(("user:" + username).encode()).hexdigest()
+        ip_key = hashlib.sha256(("ip:" + ip).encode()).hexdigest()
+        limits = {user_key: 20, ip_key: 100}
         now = timezone.now()
         with transaction.atomic():
-            for key in keys:
+            attempts = []
+            for key in sorted(limits):
                 attempt, _ = LoginAttempt.objects.select_for_update().get_or_create(
                     key=key, defaults={"window_start": now},
                 )
                 if now - attempt.window_start >= timedelta(minutes=10):
                     attempt.window_start = now
                     attempt.attempts = 0
-                limit = 20 if key == hashlib.sha256(("user:" + username).encode()).hexdigest() else 100
-                if attempt.attempts >= limit:
+                if attempt.attempts >= limits[key]:
                     return render(request, self.template_name, {"form": self.get_form(), "throttled": True}, status=429)
+                attempts.append(attempt)
+            for attempt in attempts:
                 attempt.attempts += 1
                 attempt.save()
         return super().post(request, *args, **kwargs)

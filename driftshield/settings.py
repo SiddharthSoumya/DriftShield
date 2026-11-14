@@ -112,3 +112,6 @@ EMAIL_USE_TLS = os.environ.get("DS_SMTP_TLS", "1") == "1"
 EMAIL_TIMEOUT = 12
 DEFAULT_FROM_EMAIL = os.environ.get("DS_FROM_EMAIL", "DriftShield <driftshield@localhost>")
 GITHUB_KEY = os.environ.get("DS_GITHUB_ENCRYPTION_KEY", "")
+
+DS_INGEST_MIN_SECONDS = 60
+DS_TRUST_PROXY_CLIENT_IP = os.environ.get("DS_TRUST_PROXY_CLIENT_IP") == "1"

@@ -17,6 +17,10 @@ class Conflict(Exception):
     pass
 
 
+class RateLimited(Exception):
+    pass
+
+
 def digest(token):
     return hashlib.sha256(token.encode()).hexdigest()
 
@@ -59,6 +63,10 @@ def alert(target, subject, detail):
     notify(target.workspace, f"{subject}: {target.name}", f"{detail}\n\n{link}")
 
 
+def fingerprint(payload):
+    return digest(json.dumps(payload, sort_keys=True, separators=(",", ":")))
+
+
 def same(left, right):
     return json.dumps(left, sort_keys=True) == json.dumps(right, sort_keys=True)
 
@@ -78,7 +86,12 @@ def compare(target, expected, now):
             continue
         if finding:
             finding.closed_at = now
-            finding.resolution = "verified" if not different and finding.review_at else "restored" if not different else "changed"
+            if different:
+                finding.resolution = "changed"
+            elif target.platform == "terraform":
+                finding.resolution = "reconciled"
+            else:
+                finding.resolution = "verified" if finding.review_at else "restored"
             finding.save(update_fields=["closed_at", "resolution"])
         if different:
             Finding.objects.create(target=target, resource=key, expected=before, actual=after, priority=risk(before, after),
@@ -93,7 +106,11 @@ def accept(target, delivery, captured, payload, now):
     """Caller holds workspace and target locks."""
     previous = Delivery.objects.filter(target=target, identifier=delivery).first()
     if previous:
+        if previous.captured_at != captured or (previous.payload_hash and previous.payload_hash != fingerprint(payload)):
+            raise Conflict("Delivery ID has already been used.")
         return previous.status
+    if target.last_attempt and now - target.last_attempt < timedelta(seconds=settings.DS_INGEST_MIN_SECONDS):
+        raise RateLimited
     last = Delivery.objects.filter(target=target).order_by("-captured_at").values_list("captured_at", flat=True).first()
     if last and captured <= last:
         raise Conflict("Observation arrived out of order.")
@@ -117,7 +134,8 @@ def accept(target, delivery, captured, payload, now):
             baseline = Baseline.objects.get(target=target, version=target.version)
             result = "drift" if compare(target, baseline.values, now) else "match"
     target.save()
-    Delivery.objects.create(target=target, identifier=delivery, captured_at=captured, received_at=now, status=result)
+    Delivery.objects.create(target=target, identifier=delivery, captured_at=captured, received_at=now,
+                            status=result, payload_hash=fingerprint(payload))
     return result
 
 

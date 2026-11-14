@@ -1,3 +1,17 @@
+{
+    servers {
+        timeouts {
+            read_header 10s
+            read_body 20s
+        }
+    }
+}
+
 driftshield.example.com {
-    reverse_proxy 127.0.0.1:8000
+    request_body {
+        max_size 1000000
+    }
+    reverse_proxy 127.0.0.1:8000 {
+        header_up X-DriftShield-Client-IP {remote_host}
+    }
 }

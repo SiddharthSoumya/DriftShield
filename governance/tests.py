@@ -167,6 +167,18 @@ class WorkflowTests(TestCase):
         self.assertFalse(Baseline.objects.filter(monitor=self.monitor).exists())
         self.assertContains(self.client.get(reverse("audit", args=["pilot"])), "Monitor removed")
 
+    @override_settings(DS_TRUST_PROXY_CLIENT_IP=True)
+    def test_login_client_ip_only_trusts_loopback_proxy(self):
+        from django.test import RequestFactory
+
+        from .views import login_client
+
+        factory = RequestFactory()
+        direct = factory.post("/login/", REMOTE_ADDR="192.0.2.2", HTTP_X_DRIFTSHIELD_CLIENT_IP="198.51.100.2")
+        proxied = factory.post("/login/", REMOTE_ADDR="127.0.0.1", HTTP_X_DRIFTSHIELD_CLIENT_IP="198.51.100.2")
+        self.assertEqual(login_client(direct), "192.0.2.2")
+        self.assertEqual(login_client(proxied), "198.51.100.2")
+
     def test_login_throttle(self):
         client = Client()
         for _ in range(20):

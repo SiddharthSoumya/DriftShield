@@ -38,6 +38,7 @@ class Delivery(models.Model):
     received_at = models.DateTimeField(default=timezone.now, db_index=True)
     captured_at = models.DateTimeField()
     status = models.CharField(max_length=16)
+    payload_hash = models.CharField(max_length=64, blank=True, default="")
 
     class Meta:
         constraints = [models.UniqueConstraint(fields=["target", "identifier"], name="infra_unique_delivery")]

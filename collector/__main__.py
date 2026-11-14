@@ -5,6 +5,7 @@ import json
 import os
 from pathlib import Path
 import re
+import selectors
 import subprocess
 import sys
 import time
@@ -30,11 +31,36 @@ def load(path):
     return decode(data)
 
 
+def provider_output(args):
+    # Platform CLIs and their subprocesses only need their own credentials.
+    env = {key: value for key, value in os.environ.items() if key not in ("DRIFTSHIELD_TOKEN", "DRIFTSHIELD_ENDPOINT")}
+    deadline = time.monotonic() + 90
+    output = bytearray()
+    with subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, env=env) as process:
+        try:
+            with selectors.DefaultSelector() as selector:
+                selector.register(process.stdout, selectors.EVENT_READ)
+                while True:
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0 or not selector.select(remaining):
+                        raise subprocess.TimeoutExpired(args, 90)
+                    chunk = os.read(process.stdout.fileno(), 65536)
+                    if not chunk:
+                        break
+                    output.extend(chunk)
+                    if len(output) > 32_000_000:
+                        raise ValueError("Provider response too large.")
+            code = process.wait(timeout=max(0, deadline - time.monotonic()))
+            if code:
+                raise subprocess.CalledProcessError(code, args)
+        finally:
+            if process.poll() is None:
+                process.kill()
+    return bytes(output)
+
+
 def cli(args):
-    output = subprocess.run(args, check=True, capture_output=True, timeout=90)
-    if len(output.stdout) > 32_000_000:
-        raise ValueError("Provider response too large.")
-    return decode(output.stdout)
+    return decode(provider_output(args))
 
 
 def collect(args):
@@ -52,9 +78,8 @@ def collect(args):
         ):
             raise ValueError("Specify a Docker context and explicitly monitored containers.")
         prefix = ["docker", "--context", args.context]
-        inventory = subprocess.run(prefix + ["container", "ls", "-a", "--format", "{{.Names}}"],
-                                   check=True, capture_output=True, text=True, timeout=90)
-        names = set(inventory.stdout.splitlines()).intersection(args.container)
+        inventory = provider_output(prefix + ["container", "ls", "-a", "--format", "{{.Names}}"])
+        names = set(inventory.decode().splitlines()).intersection(args.container)
         return adapters.docker(cli(prefix + ["inspect", "--type", "container", "--", *sorted(names)])) if names else {}
     if args.platform == "kubernetes":
         if not args.context or not args.namespace or args.context.startswith("-") or not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,62}", args.namespace):
@@ -62,6 +87,8 @@ def collect(args):
         groups = "deployments.apps,statefulsets.apps,daemonsets.apps,services,horizontalpodautoscalers.autoscaling"
         document = cli(["kubectl", "--context", args.context, "--namespace", args.namespace, "--request-timeout=30s",
                         "get", groups, "-o", "json"])
+        if document.get("kind") != "List" or document.get("metadata", {}).get("continue"):
+            raise ValueError("Kubernetes inventory is incomplete.")
         return adapters.kubernetes([document], args.namespace)
     if not args.region or not re.fullmatch(r"[a-z]{2}(?:-[a-z0-9]+)+-\d+", args.region):
         raise ValueError("Specify an AWS region.")
@@ -124,10 +151,16 @@ def main():
     except (ValueError, KeyError, TypeError, AttributeError, RecursionError):
         payload["error"] = "invalid_snapshot"
     try:
+        if "resources" in payload:
+            try:
+                envelope(payload, datetime.now(timezone.utc))
+                if len(json.dumps(payload, separators=(",", ":")).encode()) > MAX_BODY:
+                    raise ValueError("Observation is too large.")
+            except (ValueError, TypeError, OverflowError):
+                del payload["resources"]
+                payload["error"] = "invalid_snapshot"
         envelope(payload, datetime.now(timezone.utc))
         body = json.dumps(payload, separators=(",", ":")).encode()
-        if len(body) > MAX_BODY:
-            raise ValueError("Observation is too large. Split the monitored scope.")
         if args.preview:
             print(body.decode())
         else:

@@ -13,6 +13,54 @@ PLATFORMS = {"terraform", "docker", "kubernetes", "aws", "snapshot"}
 ERRORS = {"collection_failed", "invalid_snapshot", "collector_timeout"}
 
 
+# Native adapters send these exact projections. A schema change requires coordinated
+# collector and server versioning. Custom snapshots have a separate, flexible contract.
+RULES = {
+    "terraform": {"*": {"action": str, "resource_type": str}},
+    "docker": {"container": {
+        "image": str, "privileged": bool, "read_only_root": bool, "memory_bytes": int, "nano_cpus": int,
+        "network_mode": str, "restart_policy": str, "capabilities_digest": str, "port_bindings_digest": str,
+    }},
+    "kubernetes": {
+        "deployment": {"images_digest": str, "resources_digest": str, "privileged": bool, "host_network": bool, "replicas": int},
+        "statefulset": {"images_digest": str, "resources_digest": str, "privileged": bool, "host_network": bool, "replicas": int},
+        "daemonset": {"images_digest": str, "resources_digest": str, "privileged": bool, "host_network": bool},
+        "service": {"service_type": str, "ports_digest": str},
+        "horizontalpodautoscaler": {"min_size": int, "max_size": int},
+    },
+    "aws": {
+        "ec2": {"instance_type": str, "state": str},
+        "ebs": {"size": int, "volume_type": str, "encrypted": bool, "iops": (int, type(None)), "throughput": (int, type(None))},
+        "nat": {"connectivity_type": str},
+        "rds": {"instance_class": str, "engine": str, "multi_az": bool, "publicly_accessible": bool,
+                "encrypted": bool, "allocated_storage": (int, type(None)), "iops": (int, type(None))},
+        "asg": {"min_size": int, "max_size": int, "desired_capacity": int},
+        "elb": {"load_balancer_type": str, "scheme": str, "availability_zones": int},
+        "eip": {"associated": bool},
+    },
+}
+
+_DIGEST = re.compile(r"[a-f0-9]{64}\Z")
+
+
+def validate_native(platform, resources):
+    if platform == "snapshot":
+        return
+    definitions = RULES[platform]
+    for identifier, fields in resources.items():
+        kind, separator, name = identifier.partition("/")
+        expected = definitions.get(kind) or definitions.get("*")
+        if not separator or not name or not expected or fields.keys() != expected.keys():
+            raise ValueError("Unexpected or missing native resource fields.")
+        if platform == "terraform" and (kind != fields["resource_type"] or not re.fullmatch(r"[a-f0-9]{24}", name)):
+            raise ValueError("Invalid Terraform resource projection.")
+        for key, types in expected.items():
+            value = fields[key]
+            allowed = types if isinstance(types, tuple) else (types,)
+            if type(value) not in allowed or (key.endswith("_digest") and not _DIGEST.fullmatch(value)):
+                raise ValueError("Invalid native resource field.")
+
+
 def _unique(pairs):
     obj = {}
     for name, value in pairs:
@@ -67,7 +115,7 @@ def envelope(data, now):
     if not now - timedelta(minutes=15) <= captured <= now + timedelta(seconds=30):
         raise ValueError("Observation is outside the delivery window.")
     if "resources" in data:
-        validate_values(data["resources"])
+        validate_native(data["platform"], validate_values(data["resources"]))
     elif data["error"] not in tuple(ERRORS):
         raise ValueError("Invalid collection error.")
     return delivery, captured

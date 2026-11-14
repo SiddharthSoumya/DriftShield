@@ -68,6 +68,7 @@ The CI workflow runs tests against PostgreSQL. Deployment validation includes a 
 | [Frontend](docs/frontend.md) | Page map, states, accessibility and workflow design |
 | [GitHub](docs/github.md) | App setup, permissions, coverage and collection limits |
 | [Operations](docs/operations.md) | Install, upgrade, health checks, troubleshooting and recovery |
+| [Release readiness](docs/release-readiness.md) | Customer-hosted acceptance gates and remaining risks |
 | [Security](docs/security.md) | Trust model, security controls, and operator responsibilities |
 
 [MIT license](LICENSE). The original prototype is in the [v1 commit](https://github.com/SiddharthSoumya/DriftShield/tree/dfdf88f8fe16318f110839bb3f98db75d0e2cbbe). The [v2 branch](https://github.com/SiddharthSoumya/DriftShield/tree/driftshield-v2) contains the earlier single-operator pilot.

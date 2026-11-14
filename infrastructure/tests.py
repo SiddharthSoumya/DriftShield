@@ -9,7 +9,7 @@ from uuid import uuid4
 
 from django.contrib.auth import get_user_model
 from django.db import connection, close_old_connections
-from django.test import Client, TestCase, TransactionTestCase
+from django.test import Client, TestCase, TransactionTestCase, override_settings
 from django.utils import timezone
 
 from collector import adapters
@@ -20,6 +20,7 @@ from .domain import issue_token, maintenance
 from .models import Baseline, Delivery, Finding, Target
 
 
+@override_settings(DS_INGEST_MIN_SECONDS=0)
 class TargetTests(TestCase):
     @classmethod
     def setUpTestData(cls):
@@ -39,11 +40,15 @@ class TargetTests(TestCase):
         self.detail = f"/w/alpha/infra/{self.target.pk}/"
         self.now = timezone.now()
 
+    @staticmethod
+    def volume(size):
+        return {"size": size, "volume_type": "gp3", "encrypted": True, "iops": None, "throughput": None}
+
     def payload(self, values=None, seconds=0, **changes):
         return {
             "schema": 1, "platform": self.target.platform, "scope": self.target.scope,
             "delivery": str(uuid4()), "captured_at": (self.now + timedelta(seconds=seconds)).isoformat(),
-            "resources": values if values is not None else {"ebs/vol-1": {"size": 50}}, **changes,
+            "resources": values if values is not None else {"ebs/vol-1": self.volume(50)}, **changes,
         }
 
     def post(self, payload, token=None):
@@ -59,10 +64,10 @@ class TargetTests(TestCase):
     def test_drift_repeat_review_and_verification(self):
         self.assertEqual(self.post(self.payload()).json()["status"], "unbaselined")
         self.assertContains(self.action("approve"), "Version 1")
-        changed = self.payload({"ebs/vol-1": {"size": 100}}, seconds=1)
+        changed = self.payload({"ebs/vol-1": self.volume(100)}, seconds=1)
         self.assertEqual(self.post(changed).json()["status"], "drift")
         self.assertEqual(self.post(changed).json()["status"], "drift")
-        self.post(self.payload({"ebs/vol-1": {"size": 100}}, seconds=2))
+        self.post(self.payload({"ebs/vol-1": self.volume(100)}, seconds=2))
         finding = Finding.objects.get()
         self.assertEqual((finding.count, finding.priority), (2, "high"))
         self.assertEqual(Notification.objects.count(), 1)
@@ -75,13 +80,13 @@ class TargetTests(TestCase):
     def test_accept_selected_and_reject_stale_approval(self):
         self.post(self.payload())
         self.action("approve")
-        self.post(self.payload({"rds/db-1": {"instance_class": "db.r7g.large"}}, seconds=1))
-        added = Finding.objects.get(resource="rds/db-1")
+        self.post(self.payload({"ebs/vol-2": self.volume(100)}, seconds=1))
+        added = Finding.objects.get(resource="ebs/vol-2")
         response = self.action("approve", finding=added.pk, revision=1)
         self.assertContains(response, "Refresh the page")
         self.action("approve", finding=added.pk)
         self.assertEqual(Baseline.objects.latest("version").values, {
-            "ebs/vol-1": {"size": 50}, "rds/db-1": {"instance_class": "db.r7g.large"},
+            "ebs/vol-1": self.volume(50), "ebs/vol-2": self.volume(100),
         })
         self.assertTrue(Finding.objects.filter(resource="ebs/vol-1", closed_at__isnull=True).exists())
 
@@ -94,7 +99,7 @@ class TargetTests(TestCase):
         self.assertEqual(self.post(data).json()["status"], "error")
         self.assertEqual(self.post(self.payload(seconds=1)).status_code, 409)
         self.target.refresh_from_db()
-        self.assertEqual(self.target.latest, {"ebs/vol-1": {"size": 50}})
+        self.assertEqual(self.target.latest, {"ebs/vol-1": self.volume(50)})
         self.assertEqual(self.target.revision, 1)
 
     def test_access_scope_rotation_body_and_replay(self):
@@ -115,15 +120,32 @@ class TargetTests(TestCase):
         csrf_client.force_login(self.owner)
         self.assertEqual(csrf_client.post(self.detail + "action/", {"action": "rotate"}).status_code, 403)
 
+    @override_settings(DS_INGEST_MIN_SECONDS=60)
+    def test_rate_limit_preserves_retry_and_rejects_conflicting_delivery(self):
+        original = self.payload()
+        self.assertEqual(self.post(original).status_code, 200)
+        self.assertEqual(self.post(original).status_code, 200)
+        self.assertEqual(self.post({**original, "resources": {}}).status_code, 409)
+        self.assertEqual(self.post(self.payload(seconds=1)).status_code, 429)
+        self.assertEqual(Delivery.objects.count(), 1)
+
+    def test_native_contract_rejects_incomplete_or_unexpected_fields(self):
+        value = self.volume(50)
+        self.assertEqual(self.post(self.payload({"ebs/vol-1": {"size": 50}})).status_code, 422)
+        self.assertEqual(self.post(self.payload({"ebs/vol-1": {**value, "secret": "fixture"}})).status_code, 422)
+        self.assertFalse(Delivery.objects.exists())
+
     def test_terraform_observations_cannot_approve_away_drift(self):
         self.target.platform = "terraform"
         self.target.scope = "prod"
         self.target.save()
-        data = self.payload({"aws_instance/opaque": {"action": "update", "resource_type": "aws_instance"}})
+        data = self.payload({"aws_instance/012345678901234567890123": {"action": "update", "resource_type": "aws_instance"}})
         self.assertEqual(self.post(data).json()["status"], "drift")
         self.assertContains(self.action("approve"), "refreshed state")
         self.assertFalse(Baseline.objects.exists())
+        self.action("review", finding=Finding.objects.get().pk)
         self.assertEqual(self.post(self.payload({}, seconds=1)).json()["status"], "unbaselined")
+        self.assertEqual(Finding.objects.get().resolution, "reconciled")
         self.action("approve")
         self.assertEqual(Baseline.objects.get().values, {})
 
@@ -158,6 +180,15 @@ class AdapterTests(TestCase):
             ), patch("collector.__main__.send", return_value="match") as sender, patch("sys.stdout", new_callable=StringIO):
                 self.assertEqual(main(), 0)
                 self.assertEqual(json.loads(sender.call_args.args[2])["scope"], "prod")
+
+    def test_provider_process_environment_excludes_intake_credential(self):
+        import sys
+
+        from collector.__main__ import provider_output
+
+        command = [sys.executable, "-c", "import os; print(os.getenv('DRIFTSHIELD_TOKEN'))"]
+        with patch.dict("os.environ", {"DRIFTSHIELD_TOKEN": "test-secret"}):
+            self.assertEqual(provider_output(command).strip(), b"None")
 
     def test_scalars_are_type_sensitive(self):
         from .domain import same
