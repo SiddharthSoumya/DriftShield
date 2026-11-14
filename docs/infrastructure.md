@@ -44,8 +44,8 @@ trap 'rm -rf -- "$work"' EXIT
 run_collector() {
   PYTHONPATH="$project" python3 -m collector terraform --scope "$scope" "$@"
 }
-if "$iac_cli" plan -refresh-only -input=false -out="$work/plan" >"$work/plan.log" 2>&1 &&
-   "$iac_cli" show -json "$work/plan" >"$work/plan.json"; then
+if env -u DRIFTSHIELD_TOKEN -u DRIFTSHIELD_ENDPOINT "$iac_cli" plan -refresh-only -input=false -out="$work/plan" >"$work/plan.log" 2>&1 &&
+   env -u DRIFTSHIELD_TOKEN -u DRIFTSHIELD_ENDPOINT "$iac_cli" show -json "$work/plan" >"$work/plan.json"; then
   run_collector --file "$work/plan.json"
 else
   run_collector --collection-failed
@@ -63,12 +63,12 @@ cd /opt/driftshield-collector
 python3 -m collector docker --scope billing-host --context production --container billing-api
 ```
 
-When a finding opens, review the approved and observed values, record the change ticket, and restore through the normal Terraform, GitOps, Compose, or AWS change process. Run the collector again. A matching observation closes the finding as verified after a review. An intentional difference can be accepted as a new baseline for snapshot targets. Terraform drift is reconciled through its existing workflow.
+When a finding opens, review the approved and observed values, record the change ticket, and restore through the normal Terraform, GitOps, Compose, or AWS change process. Run the collector again. A matching inventory observation closes the finding as verified after a review. Terraform/OpenTofu closes it as reconciled because a clean refresh-only report can also follow a state change. An intentional difference can be accepted as a new baseline for snapshot targets. Terraform drift is reconciled through its existing workflow.
 
 Production staging should exercise one target per provider you intend to sell. Test a supported change, a restoration, an upstream permission error, a missed collection, a repeated submission, and SMTP delivery. Never change a customer production environment merely to test the monitor.
 
 ## Limits and deployment boundary
 
-Each observation supports at most 500 resources, 32 fields per resource and a 1 MB request. Configure the reverse proxy to permit that size, preserve the request length, and rate-limit the ingestion route. Use an AWS account/region whose supported inventory fits the limits. Partial, malformed, or expired deliveries are rejected. Snapshots are allowlisted but may contain infrastructure names or operational metadata. Review this information before sending it to a hosted service. A target token authorizes observations for its own target and its holder can submit observations. Rotate the token if its runner is compromised.
+Each observation supports at most 500 resources, 32 fields per resource and a 1 MB request. Configure the reverse proxy to permit that size, preserve the request length, and rate-limit the ingestion route. Use an AWS account/region whose supported inventory fits the limits. Malformed or expired deliveries are rejected. The native schema rejects unexpected or incomplete resource fields. A fully formed inventory can still omit resources if the runner has the wrong scope or upstream access. Snapshots are allowlisted but may contain infrastructure names or operational metadata. Review this information before sending it to a hosted service. A target token authorizes observations for its own target and its holder can submit observations. Rotate the token if its runner is compromised.
 
 The dashboard and intake run on the same DriftShield server. The collector runs separately and needs no inbound connection. The project does not execute the remediation or accept remote commands through the collector.

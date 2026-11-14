@@ -8,4 +8,12 @@ Mutations use CSRF tokens. Production uses HTTPS redirects, host validation, sec
 
 GitHub private keys use authenticated encryption in the database. Keep `DS_GITHUB_ENCRYPTION_KEY` backed up with restricted access. An installation key can be rotated through the CLI. Rotating the service encryption key requires decrypting and re-encrypting existing App keys in a maintenance operation or rebinding each installation. Protect PostgreSQL files, backups and SMTP configuration. Avoid copying raw settings into third-party systems without customer approval.
 
-Alert emails contain repository names and finding categories. Keep recipients under the customer's control. The browser prevents cross-workspace access at the application layer. Independent testing and PostgreSQL row-level policies should precede a broadly hosted multi-tenant rollout. SSO, MFA, penetration testing and formal compliance attestations are outside v3.
+Alert emails contain repository names and finding categories. Keep recipients under the customer's control. The server scopes application queries to the signed-in user’s workspace membership. Independent testing and PostgreSQL row-level policies should precede a broadly hosted multi-tenant rollout. SSO, MFA, penetration testing and formal compliance attestations are outside v3.
+
+## Infrastructure evidence
+
+Native ingestion validates resource field names and types, rate-limits accepted observations per target, and checks that retries of a delivery agree with its saved content hash. The hash identifies a retry. A bearer token authenticates the collector, and the collector supplies the evidence. A compromised collector or leaked token can submit false but well-formed observations. Treat findings as operational evidence, independently confirm critical changes and rotate the credential when runner integrity is uncertain. Short-lived machine identity and cryptographic provenance are future work.
+
+Use one trusted runner and stable scope per target. A schema cannot establish that an upstream inventory is complete. Monitor the health of the collector, account and permissions independently. The custom snapshot protocol accepts operator-defined scalar fields and cannot determine which strings are secrets. Never send credentials or raw configuration through that interface.
+
+Apply reverse-proxy body limits and timeouts before enabling public ingestion. Keep the backend loopback-only, use an independently authenticated monitoring path for service and worker health, and add edge throttling suited to your network for high-volume deployments.

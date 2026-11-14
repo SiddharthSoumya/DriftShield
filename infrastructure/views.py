@@ -19,7 +19,7 @@ from collector.contract import IDENTIFIER, MAX_BODY, PLATFORMS, decode, envelope
 from governance.domain import audit
 from governance.models import Workspace
 from governance.views import csv_value, member_view
-from .domain import Conflict, accept, approve, digest, fresh, issue_token, status
+from .domain import Conflict, RateLimited, accept, approve, digest, fresh, issue_token, status
 from .models import Delivery, Finding, Target
 
 TOKEN = re.compile(r"Bearer ([A-Za-z0-9_-]{43})\Z")
@@ -85,9 +85,11 @@ def add(request, member):
 @require_POST
 def ingest(request, pk):
     token = TOKEN.fullmatch(request.headers.get("Authorization", ""))
-    candidate = digest(token[1]) if token else ""
+    if not token:
+        return JsonResponse({"error": "Invalid collector credential."}, status=401)
+    candidate = digest(token[1])
     initial = Target.objects.filter(pk=pk).values("workspace_id", "token_hash").first()
-    if not token or not initial or not hmac.compare_digest(candidate, initial["token_hash"]):
+    if not initial or not hmac.compare_digest(candidate, initial["token_hash"]):
         return JsonResponse({"error": "Invalid collector credential."}, status=401)
     if request.content_type != "application/json":
         return JsonResponse({"error": "Expected application/json."}, status=415)
@@ -114,8 +116,11 @@ def ingest(request, pk):
             return JsonResponse({"error": "Observation scope does not match target."}, status=422)
         try:
             result = accept(target, delivery, captured, data, now)
-        except Conflict:
-            return JsonResponse({"error": "Observation arrived out of order."}, status=409)
+        except Conflict as error:
+            return JsonResponse({"error": str(error)}, status=409)
+        except RateLimited:
+            return JsonResponse({"error": "Target delivery rate exceeded."}, status=429,
+                                headers={"Retry-After": str(settings.DS_INGEST_MIN_SECONDS)})
     return JsonResponse({"status": result})
 
 
