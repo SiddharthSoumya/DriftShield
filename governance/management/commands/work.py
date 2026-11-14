@@ -45,12 +45,12 @@ class Command(BaseCommand):
                         weekly_digests()
                         heartbeat("retention")
                         next_prune = time.monotonic() + 3600
+                    heartbeat()
                 except Exception:
                     if options["once"]:
                         raise
                     logger.exception("Worker iteration failed")
                     stop.wait(5)
-                    heartbeat()
                 else:
                     if options["once"]:
                         return
