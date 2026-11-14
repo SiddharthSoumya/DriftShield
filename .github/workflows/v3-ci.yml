@@ -34,6 +34,7 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
+          fetch-depth: 0
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: '3.12'
@@ -137,6 +138,49 @@ jobs:
             -H "Authorization: Bearer $probe" http://127.0.0.1:8000/internal/pilot/healthz)" = 503
           python -c 'import json, sys; assert json.load(open(sys.argv[1]))["status"] == "recovery_fenced"' "$body"
           rm -f "$body"
+      - name: Restore a populated pilot into a separate PostgreSQL instance
+        shell: bash
+        env:
+          PG_CONTAINER: ${{ job.services.postgres.id }}
+          DS_PILOT_EBS: '1'
+          DS_PILOT_STAGING: '1'
+          DS_PILOT_WORKSPACE: restore-pilot
+          DS_PILOT_RECOVERY_FENCED: '0'
+          PYTHONPATH: .
+        run: |
+          set -euo pipefail
+          umask 077
+          scratch="$(mktemp -d)"
+          restore_container=""
+          cleanup() {
+            if [[ -n "$restore_container" ]]; then docker rm -f "$restore_container" >/dev/null; fi
+            if [[ -e "$scratch/previous/.git" ]]; then git worktree remove --force "$scratch/previous"; fi
+            rm -rf "$scratch"
+          }
+          trap cleanup EXIT
+          export PILOT_RESTORE_STATE="$scratch/state.json"
+          docker exec "$PG_CONTAINER" createdb -U driftshield pilot_source
+          git worktree add --detach "$scratch/previous" a3b4d43
+          (
+            cd "$scratch/previous"
+            export DS_DB_NAME=pilot_source
+            python manage.py migrate --no-input
+            python "$GITHUB_WORKSPACE/.github/scripts/pilot-restore.py" seed
+          )
+          docker exec "$PG_CONTAINER" pg_dump -U driftshield -Fc pilot_source > "$scratch/pilot.dump"
+          restore_container="$(docker run -d -p 127.0.0.1::5432 \
+            -e POSTGRES_USER=driftshield -e POSTGRES_PASSWORD="$DS_DB_PASSWORD" -e POSTGRES_DB=pilot_restored postgres:16)"
+          for attempt in {1..30}; do
+            if docker exec "$restore_container" pg_isready -h 127.0.0.1 -U driftshield; then break; fi
+            sleep 1
+          done
+          docker exec -i "$restore_container" pg_restore -U driftshield --exit-on-error -d pilot_restored < "$scratch/pilot.dump"
+          export DS_DB_PORT="$(docker port "$restore_container" 5432/tcp | cut -d: -f2)"
+          export DS_DB_NAME=pilot_restored
+          DS_PILOT_RECOVERY_FENCED=1 python manage.py migrate --no-input
+          python manage.py migrate --check
+          DS_PILOT_RECOVERY_FENCED=1 python .github/scripts/pilot-restore.py reconcile
+          python .github/scripts/pilot-restore.py verify
       - name: Verify database outage and backup recovery
         shell: bash
         env:
