@@ -1,3 +1,4 @@
+from django.conf import settings
 from pathlib import Path
 
 import httpx
@@ -20,6 +21,8 @@ class Command(BaseCommand):
         parser.add_argument("private_key", type=Path)
 
     def handle(self, *args, **options):
+        if settings.DS_PILOT_EBS:
+            raise CommandError("GitHub integration is unavailable in the dedicated EBS pilot.")
         try:
             workspace = Workspace.objects.get(slug=options["workspace"])
             app_id, installation_id = options["app_id"], options["installation_id"]

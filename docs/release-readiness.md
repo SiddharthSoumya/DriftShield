@@ -22,3 +22,5 @@ The release supports staging and a dedicated customer-hosted pilot after the gat
 - The database and web process are shared administrative boundaries. Application membership checks and tests are in place. Add MFA or SSO, independent tenant-isolation testing, and a database-level boundary before operating a shared public SaaS for unrelated companies.
 - The audit and evidence records can be modified by an operator with database access. Add an external append-only export and immutable retention if customers require independently verifiable records.
 - Cost alerts identify configuration drivers. Customer bills, spend limits and cost attribution need provider billing data and remain outside coverage. Monitor actual spend through the provider's budget tools.
+
+Apply the [dedicated EBS acceptance gates](pilot-acceptance.md) to the first customer pilot. Customer AWS, MFA, real mailbox and restore results require evidence from the actual deployment.

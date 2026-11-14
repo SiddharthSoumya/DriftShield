@@ -1,0 +1,61 @@
+#!/usr/bin/env bash
+set -euo pipefail
+: "${DS_PILOT_ORIGIN:?set the private HTTPS origin}"
+: "${DS_PILOT_PROBE_TOKEN:?set the probe token in the environment}"
+: "${DS_PILOT_EXPECTED_STATE:?set the expected pilot health state}"
+umask 077
+scratch="$(mktemp -d)"
+trap 'rm -rf "$scratch"' EXIT
+
+case "$DS_PILOT_ORIGIN" in
+  https://*) ;;
+  *) echo "HTTPS origin required" >&2; exit 1 ;;
+esac
+
+printf 'Authorization: Bearer %s\n' "$DS_PILOT_PROBE_TOKEN" > "$scratch/auth"
+status="$(curl --silent --show-error --max-time 15 --header "@$scratch/auth" \
+  --output "$scratch/probe.json" --write-out '%{http_code}' "$DS_PILOT_ORIGIN/internal/pilot/healthz")"
+case "$DS_PILOT_EXPECTED_STATE" in
+  healthy) test "$status" = 200 ;;
+  unhealthy|recovery_fenced|database_unavailable) test "$status" = 503 ;;
+  *) echo "Unknown expected state" >&2; exit 1 ;;
+esac
+python3 - "$scratch/probe.json" "$DS_PILOT_EXPECTED_STATE" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+response = json.loads(Path(sys.argv[1]).read_bytes())
+if response.get("status") != sys.argv[2]:
+    raise SystemExit(f"Unexpected health state: {response.get('status')}")
+print(json.dumps(response, sort_keys=True))
+PY
+
+test "$(curl --silent --show-error --max-time 15 --output /dev/null --write-out '%{http_code}' \
+  "$DS_PILOT_ORIGIN/internal/pilot/healthz")" = 401
+
+if [[ -n "${DS_PILOT_EVIDENCE_BUNDLE:-}" ]]; then
+  python3 - "$DS_PILOT_EVIDENCE_BUNDLE" <<'PY'
+import hashlib
+import json
+import sys
+from zipfile import ZipFile
+
+with ZipFile(sys.argv[1]) as bundle:
+    expected = {"events.jsonl", "deliveries.jsonl", "baselines.jsonl", "approvals.jsonl", "coverage_gaps.jsonl"}
+    manifest = json.loads(bundle.read("manifest.json"))
+    if set(manifest["files"]) != expected or set(bundle.namelist()) != expected | {"manifest.json"}:
+        raise SystemExit("Missing or unexpected evidence files")
+    for filename, metadata in manifest["files"].items():
+        digest = hashlib.sha256()
+        rows = 0
+        with bundle.open(filename) as stream:
+            for line in stream:
+                json.loads(line)
+                digest.update(line)
+                rows += 1
+        if digest.hexdigest() != metadata["sha256"] or rows != metadata["rows"]:
+            raise SystemExit(f"Checksum or row-count mismatch: {filename}")
+print("Evidence bundle verified")
+PY
+fi

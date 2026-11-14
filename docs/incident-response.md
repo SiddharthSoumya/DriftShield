@@ -13,3 +13,5 @@ Assign a primary operator, backup contact, and customer communications owner bef
 | Recovery or region loss | Preserve the affected system and restore the database and protected environment file on a clean host. Follow the operations guide. | Verify DNS/TLS, sign-in, worker stages, source credentials, evidence and one monitored change. Record recovery time and missing-data window. |
 
 Preserve logs and backups under restricted access. Keep customer-facing communication factual and avoid putting tokens, raw plans, or evidence payloads into incident channels. Assess contractual and regulatory notification requirements with the responsible owner. Review the root cause and track remediation and regression tests after recovery.
+
+For an EBS pilot recovery, apply the [fenced recovery sequence](pilot-acceptance.md#recovery-and-rollback). Preserve the external mailbox and pager records alongside the evidence bundle.

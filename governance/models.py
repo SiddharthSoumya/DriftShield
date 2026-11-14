@@ -125,6 +125,18 @@ class Notification(models.Model):
     sent_at = models.DateTimeField(null=True)
     failed_at = models.DateTimeField(null=True)
 
+    canary_slot = models.DateTimeField(null=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["workspace", "canary_slot"],
+                                    condition=Q(canary_slot__isnull=False), name="gov_unique_canary_slot"),
+        ]
+        indexes = [
+            models.Index(fields=["workspace", "created_at"], condition=Q(sent_at__isnull=True, failed_at__isnull=True),
+                         name="gov_pending_notification"),
+        ]
+
 
 class WorkerHealth(models.Model):
     name = models.CharField(max_length=20, primary_key=True)

@@ -148,8 +148,16 @@ def compare(target, expected, now, captured, count_observation=True):
     return "drift" if actionable else "excepted" if excepted else "match"
 
 
+def compare_pilot(target, delivery, now):
+    from .pilot_review import compare_complete
+
+    return compare_complete(target, delivery, now)
+
+
 def accept(target, delivery, captured, payload, now):
     """Caller holds workspace and target locks."""
+    if target.profile != Target.Profile.LEGACY:
+        raise Conflict("This target requires the pilot protocol.")
     previous = Delivery.objects.filter(target=target, identifier=delivery).first()
     if previous:
         if previous.captured_at != captured or (previous.payload_hash and previous.payload_hash != fingerprint(payload)):
@@ -191,6 +199,8 @@ def accept(target, delivery, captured, payload, now):
 
 
 def fresh(target, now):
+    if target.profile != Target.Profile.LEGACY:
+        return False
     return (target.token_expires_at and now < target.token_expires_at and target.last_success
             and not target.last_error and now - target.last_success <= timedelta(minutes=2 * target.interval + 5))
 
@@ -240,13 +250,13 @@ def approve(target, revision, version, selected, actor, reason):
 
 
 def refresh_exceptions(target, now):
-    if target.version and target.last_success and target.platform != "terraform":
+    if target.profile == Target.Profile.LEGACY and target.version and target.last_success and target.platform != "terraform":
         baseline = Baseline.objects.get(target=target, version=target.version)
         compare(target, baseline.values, now, target.last_success, count_observation=False)
 
 
 def expire_exceptions(now):
-    target_ids = DriftException.objects.filter(ended_at__isnull=True, expires_at__lte=now).values_list(
+    target_ids = DriftException.objects.filter(target__profile=Target.Profile.LEGACY, ended_at__isnull=True, expires_at__lte=now).values_list(
         "target_id", "target__workspace_id",
     ).order_by("target_id").distinct()[:100]
     for target_id, workspace_id in list(target_ids):
@@ -265,14 +275,15 @@ def expire_exceptions(now):
 
 
 def maintenance(workspace, cutoff):
-    Delivery.objects.filter(target__workspace=workspace, received_at__lt=cutoff).delete()
-    Finding.objects.filter(target__workspace=workspace, closed_at__lt=cutoff).delete()
-    EvidenceEvent.objects.filter(target__workspace=workspace, created_at__lt=cutoff).delete()
-    DriftException.objects.filter(target__workspace=workspace, ended_at__isnull=False, expires_at__lt=cutoff).delete()
+    legacy = Target.objects.filter(workspace=workspace, profile=Target.Profile.LEGACY)
+    Delivery.objects.filter(target__in=legacy, received_at__lt=cutoff).delete()
+    Finding.objects.filter(target__in=legacy, closed_at__lt=cutoff).delete()
+    EvidenceEvent.objects.filter(target__in=legacy, created_at__lt=cutoff).delete()
+    DriftException.objects.filter(target__in=legacy, ended_at__isnull=False, expires_at__lt=cutoff).delete()
 
 
 def check_overdue(now):
-    for pk, workspace_id in Target.objects.filter(overdue_alerted=False).values_list("pk", "workspace_id").iterator():
+    for pk, workspace_id in Target.objects.filter(profile=Target.Profile.LEGACY, overdue_alerted=False).values_list("pk", "workspace_id").iterator():
         with transaction.atomic():
             workspace = Workspace.objects.select_for_update().filter(pk=workspace_id).first()
             if not workspace:

@@ -47,7 +47,7 @@ jobs:
       - run: python manage.py makemigrations --check --dry-run
       - run: python manage.py test -v 2
       - run: python -m compileall -q driftshield governance collector infrastructure
-      - run: for script in deploy/install.sh deploy/driftshieldctl deploy/service-launch; do bash -n "$script"; done
+      - run: for script in deploy/install.sh deploy/driftshieldctl deploy/service-launch deploy/pilot-acceptance; do bash -n "$script"; done
       - name: Check production settings
         env:
           DS_DEV: '0'
@@ -99,6 +99,44 @@ jobs:
               python -c 'import json, sys; assert json.load(sys.stdin)["status"] == "unbaselined"'
           done
           sudo driftshieldctl shell -c 'from infrastructure.models import Target, Delivery; assert Target.objects.get(name="billing").revision == 1; assert Delivery.objects.count() == 1'
+      - name: Verify the pilot migration on a separate legacy schema
+        shell: bash
+        env:
+          PG_CONTAINER: ${{ job.services.postgres.id }}
+        run: |
+          set -euo pipefail
+          docker exec "$PG_CONTAINER" createdb -U driftshield driftshield_pilot_upgrade
+          export DS_DB_NAME=driftshield_pilot_upgrade
+          python manage.py migrate governance 0004 --no-input
+          python manage.py migrate infrastructure 0006 --no-input
+          python manage.py shell -c 'from django.db import connection; c=connection.cursor(); c.execute("INSERT INTO governance_workspace (slug, name, recipient, retention_days, repo_limit, require_private, min_reviews, digest_weekly, last_digest_week, require_signatures, infra_high_priority_only) VALUES (%s, %s, %s, 90, 25, false, 0, false, %s, false, false)", ["upgrade", "Legacy upgrade", "", ""]); c.execute("INSERT INTO infrastructure_target (workspace_id, name, platform, scope, token_hash, interval, created_at, revision, version, latest, last_error, overdue_alerted, source_id, runbook_url) SELECT id, %s, %s, %s, %s, 30, now(), 0, 0, %s, %s, false, %s, %s FROM governance_workspace WHERE slug=%s", ["old", "snapshot", "scope", "", "{}", "", "", "", "upgrade"])'
+          python manage.py migrate --no-input
+          python manage.py shell -c 'from infrastructure.models import Target; t=Target.objects.get(name="old"); assert t.profile == "legacy" and t.last_complete_delivery_id is None; t.delete()'
+      - name: Verify the installed pilot health and intake fence
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo cp -p /etc/driftshield/service.env /etc/driftshield/service.env.ci
+          restore() {
+            sudo mv /etc/driftshield/service.env.ci /etc/driftshield/service.env
+            sudo systemctl restart driftshield-web driftshield-worker
+          }
+          trap restore EXIT
+          probe="$(python -c 'import secrets; print(secrets.token_urlsafe(32))')"
+          printf '%s\n' DS_DB_NAME=driftshield_pilot_upgrade DS_PILOT_EBS=1 DS_PILOT_WORKSPACE=upgrade \
+            DS_PILOT_RECOVERY_FENCED=1 "DS_PILOT_PROBE_TOKEN=$probe" | sudo tee -a /etc/driftshield/service.env >/dev/null
+          sudo systemctl stop driftshield-worker
+          sudo systemctl restart driftshield-web
+          curl --retry 10 --retry-connrefused --retry-delay 1 -fsS http://127.0.0.1:8000/livez
+          test "$(curl -sS -o /dev/null -w '%{http_code}' \
+            -H 'Host: driftshield.example.test' -H 'X-Forwarded-Proto: https' \
+            http://127.0.0.1:8000/internal/pilot/healthz)" = 401
+          body="$(mktemp)"
+          test "$(curl -sS -o "$body" -w '%{http_code}' \
+            -H 'Host: driftshield.example.test' -H 'X-Forwarded-Proto: https' \
+            -H "Authorization: Bearer $probe" http://127.0.0.1:8000/internal/pilot/healthz)" = 503
+          python -c 'import json, sys; assert json.load(open(sys.argv[1]))["status"] == "recovery_fenced"' "$body"
+          rm -f "$body"
       - name: Verify database outage and backup recovery
         shell: bash
         env:

@@ -48,3 +48,5 @@ After the web and worker services are active, follow the [collector guide](infra
 Use `/livez` for web-process liveness and `/healthz` for database readiness. The owner-only worker route now reports the latest completed tick for email, GitHub collection, freshness checks, and retention. A completed tick indicates the stage ran. Confirm actual delivery and collection success using the corresponding records and external probes.
 
 Remote production PostgreSQL requires `DS_DB_SSLMODE=verify-full`. Set `DS_DB_SSLROOTCERT` to the server's CA certificate file readable by the service account if required. Use a verified STARTTLS or implicit TLS SMTP relay. Set `DS_SMTP_SSL=1` for implicit TLS. A loopback SMTP relay without credentials may use plaintext locally. See the [incident runbook](incident-response.md) for outage and recovery procedures.
+
+For a dedicated EBS pilot, follow the [installation, acceptance and rollback runbook](pilot-acceptance.md). Keep the installation fenced while enrolling the runner and testing the private access path.

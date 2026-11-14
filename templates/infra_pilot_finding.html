@@ -1,0 +1,22 @@
+{% if finding.absence_delivery_id and not finding.absence_confirmation_id %}
+<p role="status">Awaiting independent confirmation.</p>
+{% if pilot_complete and pilot_writable and member.role == "owner" and member.user_id != enrollment.primary_operator_id %}
+<form method="post" class="stack" action="{% url 'infra_action' workspace.slug target.pk %}">{% csrf_token %}
+<input type="hidden" name="finding" value="{{ finding.pk }}"><input type="hidden" name="candidate_delivery_id" value="{{ finding.absence_delivery_id }}">
+<label>Change ticket <input name="ticket" maxlength="120" required></label>
+<label>Provider request or evidence reference <input name="external_ref" maxlength="240" required></label>
+<label>Provider check time with UTC offset <input name="checked_at" maxlength="40" required></label>
+<label><input type="checkbox" name="provider_absence" value="1" required> I independently confirmed absence in the enrolled account and region.</label>
+<button name="action" value="confirm_absence">Record independent confirmation</button>
+</form>{% endif %}
+{% endif %}
+{% if finding.pilot_review.state == "pending" %}<p>Review pending.</p>{% elif finding.pilot_review.state == "approved" %}<p>Review approved · waiting for complete confirmation.</p>{% endif %}
+{% if pilot_complete and pilot_writable and member.role != "viewer" and not finding.observation_changed and finding.pilot_review.state != "pending" %}
+<form method="post" class="stack" action="{% url 'infra_action' workspace.slug target.pk %}">{% csrf_token %}
+<input type="hidden" name="finding" value="{{ finding.pk }}"><input type="hidden" name="revision" value="{{ target.revision }}"><input type="hidden" name="version" value="{{ target.version }}">
+<label>Change ticket <input name="ticket" maxlength="120" required></label>
+<label>Execution evidence reference <input name="execution_ref" maxlength="240" required></label>
+<label>Execution completion time with UTC offset <input name="execution_completed_at" maxlength="40" required></label>
+<button name="action" value="request_review">Request remediation review</button>
+</form>
+{% endif %}

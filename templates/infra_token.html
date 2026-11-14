@@ -7,5 +7,12 @@
 <h2>Ingestion endpoint</h2><pre>{{ endpoint }}</pre>
 <h2>Collector token</h2><p>Expires {{ target.token_expires_at|date:"M j, Y H:i T" }}.</p><pre>{{ token }}</pre>
 <h2>Scope</h2><pre>{{ target.scope }}</pre>
+{% if enrollment %}
+<dl>
+<dt>Runner enrollment ID</dt><dd><code>{{ enrollment.pk }}</code></dd>
+<dt>Credential epoch</dt><dd>{{ enrollment.credential_epoch }}</dd>
+<dt>Assumed-role prefix</dt><dd><code>{{ enrollment.expected_role_prefix }}</code></dd>
+</dl>
+{% endif %}
 </section>
 {% endblock %}

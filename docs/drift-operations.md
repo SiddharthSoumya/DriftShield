@@ -25,3 +25,11 @@ Owners can enable high-priority-only infrastructure drift email in **Settings**.
 Upgrade an existing installation through the [operations guide](operations.md) and confirm prior findings still open. In a staging target, record a baseline, make a supported change, assign it, and check the field-level diff and export. Except an approved scaling value, then confirm a different value or another field still opens actionable drift. End the exception, restore the setting through the team runbook, and verify a newer observation closes the reviewed finding. Confirm actual email delivery and external worker alerting in the deployment.
 
 The workflow is built around scheduled observations and customer-run remediation. It does not offer cloud event ingestion, billing attribution, automatic rollback, or an independent tamper-evident ledger. See [release gates](release-readiness.md) for customer-hosted rollout.
+
+## EBS pilot workflow
+
+Request an initial baseline from a fresh complete EBS observation. A distinct named owner approves it with the change ticket retained in the record. Later baseline proposals select specific open findings. Pilot exceptions are unavailable.
+
+Observed restoration means a fresh complete scan showed the expected configuration. Verified remediation also links an approved review and execution record to a later complete scan. A missing volume waits for a distinct owner's independent AWS check and reference. The independent check leaves a finding open when the missing volume is expected by the baseline. Accept that change only through baseline approval.
+
+Retiring a target revokes its runner and preserves history. The owner can download the protected evidence bundle from the retired target. Verify its manifest before storing it in the agreed customer evidence location.

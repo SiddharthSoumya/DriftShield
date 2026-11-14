@@ -28,3 +28,10 @@ v1 and v2 use incompatible data models. Migrating from v1 or v2 requires a fresh
 `Target` belongs to a workspace and stores platform/scope, hashed target token and expiry, observed source ID, latest observation, revision and baseline version. `Delivery` is unique per target and UUID and records a content hash for new observations. `Baseline` is versioned per target. `Finding` records expected/observed projections and has at most one open row per target/resource. Intake and review hold workspace and target row locks and update evidence and outbox atomically. Hourly maintenance prunes old deliveries and closed findings.
 
 Infrastructure findings now store assignment, exception status, opening baseline version and reviewed observation revision. DriftException records an exact field/value exception and expiry. EvidenceEvent records lifecycle events and follows workspace retention. Existing findings retain their original records.
+
+## Dedicated EBS pilot
+
+- Infrastructure migration 0007 introduces target profiles, complete delivery references, ordered delivery indexes, runner enrollment, and one open coverage gap per target. Existing targets and deliveries retain legacy classification.
+- Infrastructure migration 0008 adds approval decisions, distinct requester and approver constraints, evidence references for closure, archived targets and an index for target evidence. PostgreSQL rejects deleting a pilot target, including a workspace deletion that would cascade to it. Migration rollback removes the trigger before removing the added schema.
+- Governance migration 0005 introduces one mailbox canary per workspace and UTC slot and an index for pending notifications.
+- Delivery, comparison, approval and coverage changes commit under workspace and target locks. Routine pruning does not remove pilot target evidence. Store protected bundles separately and follow the customer-approved retention and teardown schedule.

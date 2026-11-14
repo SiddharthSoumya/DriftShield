@@ -25,9 +25,17 @@ def audit(workspace, actor, action, monitor=None, **detail):
     Audit.objects.create(workspace=workspace, monitor=monitor, actor=actor, action=action, detail=detail)
 
 
-def notify(workspace, subject, body):
-    if workspace.recipient:
-        Notification.objects.create(workspace=workspace, recipient=workspace.recipient, subject=subject[:200], body=body)
+def notify(workspace, subject, body, *, canary_slot=None):
+    if not workspace.recipient:
+        return None
+    if canary_slot is not None:
+        notification, _ = Notification.objects.get_or_create(
+            workspace=workspace, canary_slot=canary_slot,
+            defaults={"recipient": workspace.recipient, "subject": subject[:200], "body": body},
+        )
+        return notification
+    return Notification.objects.create(workspace=workspace, recipient=workspace.recipient,
+                                       subject=subject[:200], body=body)
 
 
 def severity(field, expected, observed):

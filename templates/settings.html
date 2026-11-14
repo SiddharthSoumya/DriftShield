@@ -24,6 +24,12 @@
     <ul class="activity">{% for entry in members %}<li><strong>{{ entry.user.username }}</strong><span class="pill muted">{{ entry.get_role_display }}</span></li>{% endfor %}</ul>
   </section>
 </div>
+{% if pilot_enabled %}
+<section class="panel pad"><h2>Mailbox verification</h2>
+{% if latest_canary %}<p>Latest probe {{ latest_canary.canary_slot|date:"M j, H:i T" }} · {% if latest_canary.sent_at %}Accepted by relay{% elif latest_canary.failed_at %}Delivery failed{% else %}Queued{% endif %}.</p>{% else %}<p>No mailbox probe queued.</p>{% endif %}
+<p>Check actual receipt in the independent customer monitor.</p>
+</section>
+{% endif %}
 <section class="panel"><div class="section-head"><h2>Recent email deliveries</h2></div>
   <ul class="activity">{% for item in deliveries %}<li><div><strong>{{ item.subject }}</strong><small>{{ item.created_at|date:"M j, H:i T" }} · {{ item.attempts }} attempts</small></div>
     <span class="pill {% if item.failed_at %}danger{% elif item.sent_at %}good{% else %}warning{% endif %}">{% if item.failed_at %}Failed{% elif item.sent_at %}Accepted by SMTP{% else %}Queued{% endif %}</span>

@@ -1,6 +1,6 @@
 """Run on a customer-controlled host or scheduled CI runner."""
 import argparse
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import json
 import os
 from pathlib import Path
@@ -10,11 +10,12 @@ import subprocess
 import sys
 import time
 from urllib.error import HTTPError, URLError
+from http.client import IncompleteRead
 from urllib.parse import urlsplit
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 from uuid import uuid4
 
-from . import adapters
+from . import adapters, ebs
 from .contract import MAX_BODY, PLATFORMS, decode, envelope
 
 
@@ -31,28 +32,37 @@ def load(path):
     return decode(data)
 
 
-def provider_output(args):
+def provider_output(args, *, diagnostics=False):
     # Platform CLIs and their subprocesses only need their own credentials.
     env = {key: value for key, value in os.environ.items() if key not in ("DRIFTSHIELD_TOKEN", "DRIFTSHIELD_ENDPOINT")}
     deadline = time.monotonic() + 90
     output = bytearray()
-    with subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, env=env) as process:
+    diagnostic_output = bytearray()
+    stderr = subprocess.PIPE if diagnostics else subprocess.DEVNULL
+    with subprocess.Popen(args, stdout=subprocess.PIPE, stderr=stderr, env=env) as process:
         try:
             with selectors.DefaultSelector() as selector:
                 selector.register(process.stdout, selectors.EVENT_READ)
-                while True:
+                if diagnostics:
+                    selector.register(process.stderr, selectors.EVENT_READ)
+                while selector.get_map():
                     remaining = deadline - time.monotonic()
-                    if remaining <= 0 or not selector.select(remaining):
+                    ready = selector.select(remaining) if remaining > 0 else []
+                    if not ready:
                         raise subprocess.TimeoutExpired(args, 90)
-                    chunk = os.read(process.stdout.fileno(), 65536)
-                    if not chunk:
-                        break
-                    output.extend(chunk)
-                    if len(output) > 32_000_000:
-                        raise ValueError("Provider response too large.")
+                    for key, _ in ready:
+                        chunk = os.read(key.fd, 65536)
+                        if not chunk:
+                            selector.unregister(key.fileobj)
+                        elif key.fileobj is process.stdout:
+                            output.extend(chunk)
+                            if len(output) > 32_000_000:
+                                raise ValueError("Provider response too large.")
+                        else:
+                            diagnostic_output.extend(chunk[:max(0, 8192 - len(diagnostic_output))])
             code = process.wait(timeout=max(0, deadline - time.monotonic()))
             if code:
-                raise subprocess.CalledProcessError(code, args)
+                raise subprocess.CalledProcessError(code, args, stderr=bytes(diagnostic_output))
         finally:
             if process.poll() is None:
                 process.kill()
@@ -109,7 +119,7 @@ def collect(args):
     return adapters.aws({kind: cli(prefix + list(call)) for kind, call in adapters.AWS_CALLS.items()}), "aws:" + expected_scope
 
 
-def send(url, token, body):
+def send(url, token, body, *, captured=None):
     endpoint = urlsplit(url)
     if endpoint.scheme != "https" or not endpoint.hostname or endpoint.username or endpoint.query or endpoint.fragment:
         raise ValueError("Use the HTTPS ingestion endpoint from the dashboard.")
@@ -120,18 +130,28 @@ def send(url, token, body):
             with opener.open(request, timeout=15) as response:
                 return decode(response.read(8192))["status"]
         except HTTPError as error:
+            retry_after = error.headers.get("Retry-After", "") if error.headers else ""
+            if captured is not None and error.code == 429 and retry_after.isascii() and retry_after.isdecimal() and len(retry_after) <= 2:
+                delay = int(retry_after)
+                if (attempt < 2 and 1 <= delay <= 60
+                        and datetime.now(timezone.utc) + timedelta(seconds=delay + 15) < captured + timedelta(minutes=15)):
+                    time.sleep(delay)
+                    continue
             if error.code < 500 or attempt == 2:
                 raise ValueError(f"Ingestion returned HTTP {error.code}.") from None
-        except (URLError, OSError):
+        except (URLError, OSError, IncompleteRead):
             if attempt == 2:
                 raise ValueError("Ingestion endpoint unavailable.") from None
-        time.sleep(2 ** attempt)
+        delay = 2 ** attempt
+        if captured is not None and datetime.now(timezone.utc) + timedelta(seconds=delay + 15) >= captured + timedelta(minutes=15):
+            raise ValueError("Observation would expire before a retry.")
+        time.sleep(delay)
     raise AssertionError("Delivery retry exhausted.")
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("platform", choices=sorted(PLATFORMS))
+    parser.add_argument("platform", choices=sorted(PLATFORMS | {"aws-ebs"}))
     parser.add_argument("--scope", required=True)
     parser.add_argument("--file")
     parser.add_argument("--context")
@@ -141,10 +161,28 @@ def main():
     parser.add_argument("--endpoint", default=os.environ.get("DRIFTSHIELD_ENDPOINT"))
     parser.add_argument("--preview", action="store_true", help="Print the projected envelope locally.")
     parser.add_argument("--collection-failed", action="store_true", help="Report an upstream collection failure.")
+    parser.add_argument("--enrollment-id")
+    parser.add_argument("--credential-epoch", type=int)
+    parser.add_argument("--expected-role-prefix")
     args = parser.parse_args()
     token = os.environ.get("DRIFTSHIELD_TOKEN", "")
     if not args.preview and (not args.endpoint or not token):
         parser.error("Set DRIFTSHIELD_ENDPOINT and DRIFTSHIELD_TOKEN.")
+    if args.platform == "aws-ebs":
+        if args.file or args.context or args.namespace or args.container:
+            parser.error("EBS pilot collection does not accept local files or resource filters.")
+        try:
+            payload, captured = ebs.build_report(args, lambda command: decode(provider_output(command, diagnostics=True)))
+            body = json.dumps(payload, separators=(",", ":")).encode()
+            if args.preview:
+                print(body.decode())
+            else:
+                result = send(args.endpoint, token, body, captured=captured)
+                print(f"DriftShield: {result}")
+        except (ValueError, TypeError, KeyError, OverflowError) as error:
+            print(f"DriftShield delivery failed: {error}", file=sys.stderr)
+            return 1
+        return int(payload["coverage"] != "complete")
     now = datetime.now(timezone.utc)
     payload = {"schema": 1, "platform": args.platform, "scope": args.scope, "delivery": str(uuid4()),
                "captured_at": now.isoformat()}

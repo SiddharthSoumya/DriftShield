@@ -11,7 +11,7 @@
     <div><label for="state">Status</label><select id="state" name="state">
       <option value="open"{% if filters.state == 'open' %} selected{% endif %}>Actionable</option>
       <option value="excepted"{% if filters.state == 'excepted' %} selected{% endif %}>Excepted</option>
-      <option value="closed"{% if filters.state == 'closed' %} selected{% endif %}>Resolved</option>
+      <option value="closed"{% if filters.state == 'closed' %} selected{% endif %}>Closed</option>
       <option value="all"{% if filters.state == 'all' %} selected{% endif %}>All</option>
     </select></div>
     <div><label for="priority">Priority</label><select id="priority" name="priority">
@@ -26,7 +26,7 @@
     <table><thead><tr><th scope="col">Finding</th><th scope="col">Priority</th><th scope="col">Status</th><th scope="col">Assignee</th><th scope="col">Last seen</th></tr></thead>
     <tbody>{% for finding in page %}
       <tr><td><a href="{% url 'infra_detail' workspace.slug finding.target_id %}?finding={{ finding.pk }}#finding-{{ finding.pk }}">{{ finding.resource }}</a><small>{{ finding.target.name }}</small></td>
-      <td>{{ finding.priority|capfirst }}</td><td>{% if finding.closed_at %}{{ finding.resolution|capfirst }}{% elif finding.suppressed %}Excepted{% elif finding.review_at %}Reviewed{% else %}Open{% endif %}</td>
+      <td>{{ finding.priority|capfirst }}</td><td>{% if finding.closed_at %}{% include "infra_resolution.html" %}{% elif finding.absence_delivery_id and not finding.absence_confirmation_id %}Awaiting independent confirmation{% elif finding.suppressed %}Excepted{% elif finding.review_at %}Reviewed{% else %}Open{% endif %}</td>
       <td>{{ finding.owner.username|default:"Unassigned" }}</td><td>{{ finding.last_seen|date:"M j, H:i T" }}</td></tr>
     {% empty %}<tr><td colspan="5">No findings match these filters.</td></tr>{% endfor %}</tbody></table>
   </div>

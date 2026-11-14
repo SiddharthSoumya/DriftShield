@@ -3,22 +3,28 @@
 {% block content %}
 <div class="page-head"><div><p class="crumb">{{ workspace.name }}</p><h1>Infrastructure drift</h1><p>Monitor approved configurations across cloud accounts, clusters, and runtime environments.</p></div>
 <div class="actions"><a class="button primary" href="{% url 'infra_inbox' workspace.slug %}">Open findings queue</a><a class="button" href="{% url 'infra_evidence' workspace.slug %}">Export findings CSV</a></div></div>
+{% if pilot_enabled %}<p><a href="{% url 'infra' workspace.slug %}{% if not archived %}?archived=1{% endif %}">{% if archived %}View active targets{% else %}View retired targets{% endif %}</a></p>{% endif %}
 <section class="panel">
   <div class="section-head"><h2>Targets</h2><span class="muted-text">{{ targets|length }} connected scopes</span></div>
   {% if targets %}
-  <div class="table-wrap"><table><thead><tr><th>Target</th><th>Coverage</th><th>Status</th><th>Open findings</th><th>Last observation</th></tr></thead>
+  <div class="table-wrap"><table><thead><tr><th>Target</th><th>Coverage</th><th>Status</th><th>Open findings</th><th>Last complete observation</th></tr></thead>
   <tbody>{% for target in targets %}<tr><td><a href="{% url 'infra_detail' workspace.slug target.pk %}">{{ target.name }}</a><small>{{ target.scope }}</small></td>
   <td>{{ target.get_platform_display }}</td><td><span class="pill {{ target.tone }}">{{ target.label }}</span></td><td>{{ target.open_count }}{% if target.suppressed_count %}<small>{{ target.suppressed_count }} excepted</small>{% endif %}</td>
-  <td>{{ target.last_success|date:"M j, H:i T"|default:"Pending" }}</td></tr>{% endfor %}</tbody></table></div>
+  <td>{{ target.last_success|date:"M j, H:i T"|default:"Pending" }}{% if target.profile == "ebs_pilot" %}<small>Last contact {{ target.last_contact_at|date:"M j, H:i T"|default:"Pending" }}</small>{% endif %}</td></tr>{% endfor %}</tbody></table></div>
   {% else %}<p class="empty">Add an infrastructure target and send its first observation from a trusted collector.</p>{% endif %}
 </section>
-{% if member.role == "owner" %}
+{% if member.role == "owner" and not archived and not pilot_fenced %}
 <section class="panel pad"><h2>Add infrastructure target</h2>
   <form class="inline" method="post" action="{% url 'infra_add' workspace.slug %}">{% csrf_token %}
     <div><label for="name">Target name</label><input name="name" id="name" required maxlength="64" placeholder="production-us-east"></div>
+    {% if pilot_enabled %}
+    <input type="hidden" name="platform" value="aws"><input type="hidden" name="interval" value="30">
+    <div><label for="scope">AWS EBS scope (account:region:ebs)</label><input name="scope" id="scope" required maxlength="160"></div>
+    {% else %}
     <div><label for="platform">Platform</label><select name="platform" id="platform">{% for value, label in platforms %}<option value="{{ value }}">{{ label }}</option>{% endfor %}</select></div>
     <div><label for="scope">Scope</label><input name="scope" id="scope" required maxlength="160" placeholder="ACCOUNT_ID:REGION or scope ID"></div>
     <div><label for="interval">Expected minutes between scans</label><input name="interval" id="interval" type="number" min="5" max="1440" value="30" required></div>
+    {% endif %}
     <button class="primary">Create target</button>
   </form>
 </section>

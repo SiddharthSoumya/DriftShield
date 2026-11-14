@@ -126,3 +126,78 @@ def envelope(data, now):
     elif data["error"] not in tuple(ERRORS):
         raise ValueError("Invalid collection error.")
     return delivery, captured
+
+
+EBS_SCOPE = re.compile(r"(?P<account>[0-9]{12}):(?P<region>[a-z]{2}(?:-[a-z0-9]+)+-[0-9]+):ebs\Z")
+EBS_ID = re.compile(r"ebs/vol-(?:[0-9a-f]{8}|[0-9a-f]{17})\Z")
+EBS_ROLE = re.compile(r"arn:aws:sts::(?P<account>[0-9]{12}):assumed-role/[A-Za-z0-9+=,.@_/-]{1,192}/\Z")
+EBS_FAILURES = {
+    "incomplete_inventory", "inventory_limit", "invalid_inventory", "provider_denied",
+    "provider_unavailable", "collector_timeout", "identity_unavailable",
+}
+EBS_PARTIAL = {"incomplete_inventory", "inventory_limit", "invalid_inventory"}
+
+
+def pilot_uuid(value):
+    if not isinstance(value, str) or len(value) != 36:
+        raise ValueError("Expected a canonical UUID.")
+    parsed = uuid.UUID(value)
+    if str(parsed) != value or not parsed.int:
+        raise ValueError("Expected a canonical UUID.")
+    return parsed
+
+
+def pilot_time(value):
+    if not isinstance(value, str) or len(value) > 40:
+        raise ValueError("Invalid observation time.")
+    parsed = datetime.fromisoformat(value)
+    if parsed.tzinfo is None:
+        raise ValueError("Observation time requires a timezone.")
+    return parsed.astimezone(timezone.utc)
+
+
+def validate_ebs(resources):
+    validate_native("aws", validate_values(resources))
+    for key, fields in resources.items():
+        if not EBS_ID.fullmatch(key):
+            raise ValueError("Expected an EBS volume ID.")
+        if fields["size"] <= 0 or not fields["volume_type"]:
+            raise ValueError("Invalid EBS configuration.")
+        if any(fields[name] is not None and fields[name] < 0 for name in ("iops", "throughput")):
+            raise ValueError("Invalid EBS performance settings.")
+
+
+def pilot_envelope(data, now):
+    fields = {"schema", "platform", "scope", "source_id", "enrollment_id",
+              "credential_epoch", "delivery", "started_at", "captured_at", "coverage"}
+    if not isinstance(data, dict) or type(data.get("schema")) is not int or data["schema"] != 2:
+        raise ValueError("Unsupported EBS observation schema.")
+    coverage = data.get("coverage")
+    if coverage == "complete":
+        fields |= {"resources", "projected_count"}
+    elif coverage in ("partial", "failed"):
+        fields.add("error")
+    else:
+        raise ValueError("Invalid coverage.")
+    if data.keys() != fields or data["platform"] != "aws":
+        raise ValueError("Unexpected EBS observation fields.")
+    scope = data["scope"]
+    if not isinstance(scope, str) or len(scope) > 160 or not EBS_SCOPE.fullmatch(scope):
+        raise ValueError("Invalid EBS scope.")
+    if data["source_id"] != f"aws:{scope}":
+        raise ValueError("Invalid source.")
+    if type(data["credential_epoch"]) is not int or not 1 <= data["credential_epoch"] <= 2**31 - 1:
+        raise ValueError("Invalid credential epoch.")
+    started, captured = pilot_time(data["started_at"]), pilot_time(data["captured_at"])
+    if not timedelta(0) <= captured - started <= timedelta(minutes=5):
+        raise ValueError("Invalid observation window.")
+    if not now - timedelta(minutes=15) <= captured <= now + timedelta(seconds=30):
+        raise ValueError("Observation is outside the delivery window.")
+    if coverage == "complete":
+        validate_ebs(data["resources"])
+        if type(data["projected_count"]) is not int or data["projected_count"] != len(data["resources"]):
+            raise ValueError("Incorrect EBS resource count.")
+    elif (not isinstance(data["error"], str) or data["error"] not in EBS_FAILURES
+          or (data["error"] in EBS_PARTIAL) != (coverage == "partial")):
+        raise ValueError("Invalid coverage error.")
+    return pilot_uuid(data["delivery"]), captured, started, pilot_uuid(data["enrollment_id"])
