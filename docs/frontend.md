@@ -9,3 +9,5 @@ The Infrastructure view lists targets, platform coverage, last successful observ
 Workspace Activity lists operator actions. Workspace Settings covers policy, SMTP route, digest, retention, installation status and membership. Workspace provisioning and membership changes use the server CLI.
 
 Templates use semantic landmarks, named fields, visible keyboard focus, text with status colors, and mobile layouts with scrollable tables. Forms work without client JavaScript. Refresh the page after the worker finishes an asynchronous operation. Main pages share tokens and layout in `static/app.css`.
+
+Use **Findings queue** to filter the infrastructure backlog by status, priority or your assignments. A target page shows field-level diffs and its evidence timeline. See [the findings workflow](drift-operations.md).

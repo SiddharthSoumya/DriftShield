@@ -117,7 +117,7 @@ def weekly_digests():
                 ) for monitor in monitors
             )
             targets = Target.objects.filter(workspace=workspace)
-            infrastructure_findings = Finding.objects.filter(target__in=targets, closed_at__isnull=True).count()
+            infrastructure_findings = Finding.objects.filter(target__in=targets, closed_at__isnull=True, suppressed=False).count()
             notify(workspace, f"DriftShield weekly summary: {workspace.name}",
                    f"Active monitors: {len(monitors)}\nOpen findings: {finding_count}\n"
                    f"Unavailable: {unavailable}\nOverdue: {overdue}\n"

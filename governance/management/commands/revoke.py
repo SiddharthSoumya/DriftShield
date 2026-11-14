@@ -3,6 +3,7 @@ from django.db import transaction
 
 from governance.domain import audit
 from governance.models import Membership, Workspace
+from infrastructure.models import Finding
 
 
 class Command(BaseCommand):
@@ -21,5 +22,6 @@ class Command(BaseCommand):
             raise CommandError("Membership not found.") from error
         if member.role == "owner" and not Membership.objects.filter(workspace=workspace, role="owner").exclude(pk=member.pk).exists():
             raise CommandError("Grant another user the owner role first.")
+        Finding.objects.filter(target__workspace=workspace, owner=member.user, closed_at__isnull=True).update(owner=None)
         member.delete()
         audit(workspace, "server operator", "membership_revoked", username=options["username"])

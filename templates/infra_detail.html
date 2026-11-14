@@ -7,7 +7,7 @@
 <div class="metrics three">
 <div class="metric"><span>Last successful observation</span><strong class="compact">{{ target.last_success|date:"M j, H:i T"|default:"Pending" }}</strong></div>
 <div class="metric"><span>Approved baseline</span><strong class="compact">{% if target.version %}Version {{ target.version }}{% else %}Pending{% endif %}</strong></div>
-<div class="metric"><span>Open findings</span><strong class="compact">{{ active|length }}</strong></div>
+<div class="metric"><span>Open findings</span><strong class="compact">{{ target.open_count }}</strong>{% if target.suppressed_count %}<small>{{ target.suppressed_count }} excepted</small>{% endif %}</div>
 </div>
 {% if can_initial and member.role != "viewer" %}
 <section class="panel pad"><h2>Approve initial baseline</h2>
@@ -19,20 +19,45 @@
 </form></section>
 {% endif %}
 <section class="panel pad"><h2>Findings and remediation</h2><p>{{ guidance }}</p>
+{% if target.runbook_url %}<p><a href="{{ target.runbook_url }}" rel="noreferrer">Open team runbook</a></p>{% endif %}
 {% if not active %}<p>No open findings.</p>{% endif %}
 {% for finding in active %}
-<article class="panel pad">
+<article class="panel pad" id="finding-{{ finding.pk }}">
 <h3>{{ finding.resource }}</h3>
-<p><span class="pill {% if finding.priority == 'high' %}danger{% else %}warning{% endif %}">{{ finding.priority|capfirst }} priority</span> · {{ finding.count }} observations</p>
+<p><span class="pill {% if finding.priority == 'high' %}danger{% else %}warning{% endif %}">{{ finding.priority|capfirst }} priority</span> · {{ finding.count }} observations · {{ finding.owner.username|default:"Unassigned" }}
+{% if finding.suppressed %} · <span class="pill warning">Excepted</span>{% endif %}</p>
 <div class="split"><div><h4>Approved</h4><pre>{{ finding.expected_text }}</pre></div><div><h4>Observed</h4><pre>{{ finding.actual_text }}</pre></div></div>
+{% if finding.changes %}
+<div class="table-wrap"><table><thead><tr><th scope="col">Changed field</th><th scope="col">Approved</th><th scope="col">Observed</th></tr></thead>
+<tbody>{% for change in finding.changes %}<tr><td>{{ change.field }}</td><td>{% if change.expected_present %}{{ change.expected }}{% else %}Absent{% endif %}</td><td>{% if change.observed_present %}{{ change.observed }}{% else %}Absent{% endif %}</td></tr>{% endfor %}</tbody></table></div>
+{% endif %}
+{% if finding.observation_changed %}<p>Waiting for a post-review observation to verify the change.</p>{% endif %}
 {% if finding.review_at %}<p>Reviewed by {{ finding.reviewer }} · {{ finding.reason }}. Awaiting an observation that matches the baseline.</p>{% endif %}
-{% if fresh and member.role != "viewer" %}
+{% if member.role != "viewer" %}
+<form method="post" class="inline" action="{% url 'infra_action' workspace.slug target.pk %}">{% csrf_token %}
+<input type="hidden" name="finding" value="{{ finding.pk }}">
+<div><label for="owner-{{ finding.pk }}">Assignee</label><select name="owner" id="owner-{{ finding.pk }}">
+<option value="">Unassigned</option>
+{% for operator in operators %}<option value="{{ operator.user_id }}"{% if operator.user_id == finding.owner_id %} selected{% endif %}>{{ operator.user.username }}</option>{% endfor %}
+</select></div><button name="action" value="assign">Set assignee</button>
+</form>
+{% endif %}
+{% if fresh and member.role != "viewer" and not finding.suppressed and not finding.observation_changed %}
 <form method="post" class="inline" action="{% url 'infra_action' workspace.slug target.pk %}">{% csrf_token %}
 <input type="hidden" name="finding" value="{{ finding.pk }}"><input type="hidden" name="revision" value="{{ target.revision }}"><input type="hidden" name="version" value="{{ target.version }}">
 <div><label for="reason-{{ finding.pk }}">Change ticket or review reason</label><input name="reason" id="reason-{{ finding.pk }}" required maxlength="240"></div>
 <button name="action" value="review">Record remediation review</button>
 {% if target.platform != "terraform" %}<button name="action" value="approve">Accept observed configuration</button>{% endif %}
 </form>
+{% endif %}
+{% if fresh and member.role == "owner" and finding.exception_fields and not finding.suppressed and not finding.observation_changed %}
+<details><summary>Temporarily except an expected field change</summary>
+<form method="post" class="inline" action="{% url 'infra_action' workspace.slug target.pk %}">{% csrf_token %}
+<input type="hidden" name="finding" value="{{ finding.pk }}"><input type="hidden" name="revision" value="{{ target.revision }}"><input type="hidden" name="version" value="{{ target.version }}">
+<div><label for="field-{{ finding.pk }}">Field</label><select name="field" id="field-{{ finding.pk }}">{% for field in finding.exception_fields %}<option>{{ field }}</option>{% endfor %}</select></div>
+<div><label for="hours-{{ finding.pk }}">Duration in hours</label><input name="hours" id="hours-{{ finding.pk }}" type="number" min="1" max="168" value="1" required></div>
+<div><label for="exception-reason-{{ finding.pk }}">Exception reason</label><input name="reason" id="exception-reason-{{ finding.pk }}" maxlength="240" required></div>
+<button name="action" value="except">Create exception</button></form></details>
 {% endif %}
 </article>
 {% endfor %}
@@ -44,10 +69,25 @@
 </section>
 <div class="split">
 <section class="panel pad"><h2>Recent observations</h2><ul class="activity">{% for observation in observations %}<li>{{ observation.received_at|date:"M j, H:i T" }} · {{ observation.status }}</li>{% empty %}<li>No deliveries recorded.</li>{% endfor %}</ul></section>
-<section class="panel pad"><h2>Resolved findings</h2><ul class="activity">{% for finding in recent %}<li>{{ finding.resource }} · {{ finding.resolution }}{% if finding.reviewer %} · {{ finding.reviewer }}{% endif %}</li>{% empty %}<li>No resolved findings.</li>{% endfor %}</ul></section>
+<section class="panel pad"><h2>Resolved findings</h2><ul class="activity">{% for finding in recent %}<li id="finding-{{ finding.pk }}"><details><summary>{{ finding.resource }} · {{ finding.resolution }}{% if finding.reviewer %} · {{ finding.reviewer }}{% endif %}</summary>
+<p>{{ finding.reason }}</p><div class="split"><div><h4>Approved</h4><pre>{{ finding.expected|pprint }}</pre></div><div><h4>Observed</h4><pre>{{ finding.actual|pprint }}</pre></div></div>
+</details></li>{% empty %}<li>No resolved findings.</li>{% endfor %}</ul></section>
 </div>
 <section class="panel pad"><h2>Baseline history</h2><ul class="activity">{% for version in versions %}<li>Version {{ version.version }} · {{ version.actor }} · {{ version.reason }}</li>{% empty %}<li>No approved baselines.</li>{% endfor %}</ul></section>
+<section class="panel pad"><h2>Current exceptions</h2>
+<ul class="activity">{% for exception in exceptions %}<li><strong>{{ exception.resource }} · {{ exception.field }}</strong>
+<small>{{ exception.expected }} → {{ exception.observed }} · Expires {{ exception.expires_at|date:"M j, H:i T" }} · {{ exception.reason }}</small>
+{% if member.role == "owner" %}<form method="post" action="{% url 'infra_action' workspace.slug target.pk %}">{% csrf_token %}
+<input type="hidden" name="exception" value="{{ exception.pk }}"><button name="action" value="end_exception">End exception</button></form>{% endif %}</li>
+{% empty %}<li>No current exceptions.</li>{% endfor %}</ul></section>
+<section class="panel pad"><h2>Evidence timeline</h2><a class="button" href="{% url 'infra_timeline' workspace.slug target.pk %}">Export timeline CSV</a>
+<ul class="activity">{% for event in events %}<li><details><summary>{{ event.label }}{% if event.resource %} · {{ event.resource }}{% endif %}</summary><small>{{ event.actor }} · {{ event.created_at|date:"M j, H:i T" }}</small><pre>{{ event.formatted }}</pre></details></li>
+{% empty %}<li>No timeline events recorded.</li>{% endfor %}</ul></section>
 {% if member.role == "owner" %}
+<section class="panel pad"><h2>Team runbook</h2>
+<form method="post" class="inline" action="{% url 'infra_action' workspace.slug target.pk %}">{% csrf_token %}
+<div><label for="runbook-url">HTTPS runbook URL</label><input name="url" id="runbook-url" type="url" maxlength="500" value="{{ target.runbook_url }}"></div>
+<button name="action" value="runbook">Save runbook link</button></form></section>
 <section class="panel pad"><h2>Collector</h2><pre>{{ endpoint }}</pre>
 {% if target.source_id %}<p>Observed source ID <code>{{ target.source_id }}</code></p>{% else %}<p>No source identity has been recorded.</p>{% endif %}
 {% if target.token_expires_at %}<p>Credential expires {{ target.token_expires_at|date:"M j, Y H:i T" }}.</p>{% else %}<p>Collector credential revoked.</p>{% endif %}
