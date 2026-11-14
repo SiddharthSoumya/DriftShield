@@ -1,27 +1,22 @@
-# DriftShield v3
+# DriftShield
 
-**GitHub configuration monitoring for teams that need to know what changed and show how it was handled.**
+**Infrastructure and GitHub configuration drift monitoring with baseline approval and remediation verification.**
 
-DriftShield is a self-hosted, multi-workspace application. It watches repository visibility, the default branch, archival status, and active rulesets on the default branch. It records differences against an approved baseline, checks workspace policy, and sends email when a new finding opens or collection becomes unavailable. It reads GitHub settings and leaves changes to repository administrators.
+DriftShield compares approved configuration with observations from Terraform/OpenTofu, Docker, Kubernetes, AWS and GitHub. It flags selected cost-driving or security-sensitive changes, routes findings by email, and verifies remediation from subsequent observations. Deploy it with a PostgreSQL-backed dashboard and worker. Run infrastructure collectors inside the customer's environment.
 
-## What v3 includes
+- **Infrastructure:** Terraform/OpenTofu refresh summaries, Docker runtime configuration, Kubernetes workloads and scaling, AWS EC2, EBS, NAT, RDS, Auto Scaling, ELB and Elastic IPs, plus a custom snapshot protocol.
+- **GitHub:** Repository settings and active default-branch rulesets through read-only access.
+- **Review:** Approved versus observed values, versioned baselines, remediation review, scan history and CSV evidence.
+- **Operations:** Workspace roles, SMTP alerts, retention, health checks and systemd install/upgrade.
 
-- A responsive dashboard with repository health, findings, scan history, baseline versions, and workspace activity.
-- Public GitHub scanning and private repository monitoring with a read-only GitHub App.
-- Selective baseline approval with a reason and protection against approving stale observations.
-- Workspace checks for public exposure, minimum pull-request approvals, and signed commits.
-- Owner, operator, and viewer roles with server-managed provisioning and revocation.
-- PostgreSQL-backed scheduling, expiring job leases, retry backoff, SMTP outbox, optional weekly summaries, and evidence retention.
-- CSV export and systemd installation with separate web and worker services.
-
-This release targets GitHub.com. Active ruleset coverage depends on GitHub plan and repository access. Classic branch protection, bypass actor auditing, GitHub Enterprise Server, self-service billing, and SSO are outside this release. See the [current release scope](docs/product.md).
+Review the [coverage and collector guide](docs/infrastructure.md) before onboarding. Infrastructure remediation is applied through the team's existing tools and then verified by DriftShield.
 
 ## Try it locally
 
 With Python 3.12 or newer:
 
 ```bash
-git clone --branch driftshield-v3 https://github.com/SiddharthSoumya/DriftShield.git
+git clone --branch infrastructure-drift https://github.com/SiddharthSoumya/DriftShield.git
 cd DriftShield
 python3 -m venv .venv
 source .venv/bin/activate
@@ -32,7 +27,7 @@ python manage.py provision demo owner --name "Demo workspace"
 python manage.py runserver 127.0.0.1:8000
 ```
 
-In a second terminal, run `DS_DEV=1 .venv/bin/python manage.py work`. Open [the local dashboard](http://127.0.0.1:8000), sign in, and add a public repository you control. Once the worker has collected it, refresh the repository page and approve the first baseline. Local mode uses SQLite.
+In a second terminal, run `DS_DEV=1 .venv/bin/python manage.py work`. Open [the local dashboard](http://127.0.0.1:8000), sign in, and add a public repository you control. Once the worker has collected it, refresh the repository page and approve the first baseline. Local mode uses SQLite. Create an Infrastructure target to connect a customer-run collector using the [collector guide](docs/infrastructure.md).
 
 ## Install on a Linux server
 
@@ -64,7 +59,9 @@ The CI workflow runs tests against PostgreSQL. Deployment validation includes a 
 
 | Document | Contents |
 | --- | --- |
-| [Product](docs/product.md) | Positioning, buyer, capabilities, roadmap and commercial validation |
+| [Product](docs/product.md) | Original GitHub scope, positioning, buyer and roadmap |
+| [Infrastructure](docs/infrastructure.md) | Coverage, permissions, scheduling and remediation workflow |
+| [Commercial](docs/commercial.md) | Customer-hosted and managed deployment models |
 | [Architecture](docs/architecture.md) | Module boundaries, worker behavior, consistency and failure handling |
 | [Database](docs/database.md) | Tables, constraints, retention and migration strategy |
 | [Web and API](docs/api.md) | Routes, payloads, permissions and response behavior |

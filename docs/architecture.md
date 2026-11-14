@@ -26,3 +26,7 @@ A worker claims a due monitor with a database row lock and a five-minute lease. 
 A failed collection preserves the last good observation and open incidents. The worker schedules exponential backoff and respects GitHub retry times. Changes are detected only if visible during collection. A change made and undone between scans can be missed. The dashboard uses the server clock and distinguishes paused, awaiting scan, overdue, unavailable, needs baseline, findings open, and matching baseline.
 
 A successful comparison can resolve a finding. An operator may also approve selected fields with a recorded reason. Approval verifies both the observed revision and current baseline version. A policy finding is independent of baseline approval. Worker timestamps describe when DriftShield observed the state. The GitHub user responsible for a change is outside this product's evidence.
+
+## Infrastructure adapters
+
+The standalone `collector` runs on the customer's network. Each adapter projects provider data into the same bounded snapshot protocol. The `infrastructure` Django module authenticates each target, serializes deliveries, evaluates findings and writes notifications using the same workspace and outbox as GitHub monitoring. A collector only sends outbound observations. It has no inbound command interface.

@@ -22,3 +22,7 @@ Workspace and repository identifiers form unique constraints. A partial unique i
 Hourly maintenance removes scans, resolved incidents, audit records, and notification history older than the workspace retention window. It also prunes expired sessions and login throttle records. Current state, open incidents and baseline versions are retained until monitor removal. Removing a monitor deletes its baselines, scans and incidents. Workspace audit retains the removal event. Export before removal if your policy requires historical evidence.
 
 v1 and v2 use incompatible data models. v3 installs into a fresh PostgreSQL database. Export any earlier evidence independently and approve fresh baselines from live scans.
+
+## Infrastructure tables
+
+`Target` belongs to a workspace and stores platform/scope, hashed target token, latest observation, revision and baseline version. `Delivery` is unique per target and UUID. `Baseline` is versioned per target. `Finding` records expected/observed projections and has at most one open row per target/resource. Intake and review hold workspace and target row locks and update evidence and outbox atomically. Hourly maintenance prunes old deliveries and closed findings.

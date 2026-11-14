@@ -38,7 +38,7 @@ jobs:
       - run: python -m pip install -r requirements.txt
       - run: python manage.py makemigrations --check --dry-run
       - run: python manage.py test -v 2
-      - run: python -m compileall -q driftshield governance
+      - run: python -m compileall -q driftshield governance collector infrastructure
       - run: for script in deploy/install.sh deploy/driftshieldctl deploy/service-launch; do bash -n "$script"; done
       - name: Check production settings
         env:
@@ -73,3 +73,21 @@ jobs:
       - name: Show service logs on failure
         if: failure()
         run: sudo journalctl -u driftshield-web -u driftshield-worker -n 80 --no-pager
+      - name: Smoke-test installed infrastructure ingestion
+        shell: bash
+        run: |
+          set -euo pipefail
+          token="$(sudo driftshieldctl shell -c 'from governance.models import Workspace; from infrastructure.domain import issue_token; from infrastructure.models import Target; w=Workspace.objects.create(slug="ci-infra",name="Infrastructure CI"); token,hashed=issue_token(); Target.objects.create(workspace=w,name="billing",platform="snapshot",scope="billing",token_hash=hashed); print(token)' | tail -1)"
+          target="$(sudo driftshieldctl shell -c 'from infrastructure.models import Target; print(Target.objects.get(name="billing").pk)' | tail -1)"
+          snapshot="$(mktemp)"
+          report="$(mktemp)"
+          trap 'rm -f "$snapshot" "$report"' EXIT
+          printf '%s\n' '{"billing/api":{"replicas":2}}' > "$snapshot"
+          python -m collector snapshot --scope billing --file "$snapshot" --preview > "$report"
+          for attempt in 1 2; do
+            curl -fsS http://127.0.0.1:8000/api/v1/infrastructure/"$target"/observations/ \
+              -H 'Host: driftshield.example.test' -H 'X-Forwarded-Proto: https' \
+              -H "Authorization: Bearer $token" -H 'Content-Type: application/json' --data-binary @"$report" |
+              python -c 'import json, sys; assert json.load(sys.stdin)["status"] == "unbaselined"'
+          done
+          sudo driftshieldctl shell -c 'from infrastructure.models import Target, Delivery; assert Target.objects.get(name="billing").revision == 1; assert Delivery.objects.count() == 1'

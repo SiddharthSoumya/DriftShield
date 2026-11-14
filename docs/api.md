@@ -22,3 +22,7 @@ The browser uses HTML forms with Django sessions and CSRF tokens. Successful mut
 Approval takes the last rendered `revision`, `version`, repeated `field` parameters and a non-empty `reason` of at most 240 characters. Acknowledgement takes `incident` and checks that the record belongs to the selected repository. CSV uses standard quoting and prefixes spreadsheet formula-like cells.
 
 These are same-origin application interfaces. A separately versioned token-authenticated customer API is a future extension.
+
+## Infrastructure interface
+
+`POST /api/v1/infrastructure/{id}/observations/` accepts a scoped bearer credential and JSON with `schema: 1`, `platform`, `scope`, UUID `delivery`, timezone-aware `captured_at`, and either `resources` or `error`. Resource IDs map to allowlisted scalar fields. A repeated delivery ID returns its original status within the acceptance window. Stale order returns 409, wrong scope or invalid input 422, invalid token 401, and missing or oversized body 413. Results are `unbaselined`, `match`, `drift`, or `error`. Workspace owners create, rotate and remove targets. Operators and owners can approve baselines and record remediation reviews. Viewers can inspect targets and export evidence.

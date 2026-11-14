@@ -1,11 +1,18 @@
 from django.urls import path
 
 from governance import views
+from infrastructure import views as infra
 
 urlpatterns = [
     path("", views.index, name="index"),
     path("login/", views.WorkspaceLogin.as_view(), name="login"),
     path("logout/", views.sign_out, name="logout"),
+    path("api/v1/infrastructure/<int:pk>/observations/", infra.ingest, name="infra_ingest"),
+    path("w/<slug:slug>/infra/", infra.overview, name="infra"),
+    path("w/<slug:slug>/infra/add/", infra.add, name="infra_add"),
+    path("w/<slug:slug>/infra/evidence.csv", infra.evidence, name="infra_evidence"),
+    path("w/<slug:slug>/infra/<int:pk>/", infra.detail, name="infra_detail"),
+    path("w/<slug:slug>/infra/<int:pk>/action/", infra.action, name="infra_action"),
     path("healthz", views.health, name="health"),
     path("w/<slug:slug>/", views.overview, name="overview"),
     path("w/<slug:slug>/repos/add/", views.add_public, name="add_public"),
