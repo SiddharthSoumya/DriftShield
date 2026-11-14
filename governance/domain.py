@@ -29,7 +29,9 @@ def notify(workspace, subject, body, *, canary_slot=None):
     if not workspace.recipient:
         return None
     if canary_slot is not None:
-        notification, _ = Notification.objects.get_or_create(
+        notification, _ = Notification.objects.exclude(
+            disposition=Notification.Disposition.ROUTE_CHANGED,
+        ).get_or_create(
             workspace=workspace, canary_slot=canary_slot,
             defaults={"recipient": workspace.recipient, "subject": subject[:200], "body": body},
         )

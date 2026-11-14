@@ -365,7 +365,20 @@ def settings_view(request, member):
             with transaction.atomic():
                 workspace = locked_member(member, "owner")
                 if workspace.recipient != recipient:
-                    Notification.objects.filter(workspace=workspace, sent_at__isnull=True, failed_at__isnull=True).delete()
+                    pending = Notification.objects.filter(workspace=workspace, sent_at=None, failed_at=None)
+                    if settings.DS_PILOT_EBS:
+                        now = timezone.now()
+                        rows = list(pending.select_for_update().order_by("pk").values_list("pk", "lease_until"))
+                        if any(expiry and expiry > now for _, expiry in rows):
+                            messages.error(request, "Wait for the active mail delivery before changing the recipient.")
+                            return redirect("settings", slug=workspace.slug)
+                        canceled = pending.filter(pk__in=[pk for pk, _ in rows]).update(
+                            failed_at=now, disposition=Notification.Disposition.ROUTE_CHANGED,
+                            lease=None, lease_until=None,
+                        )
+                        audit(workspace, request.user.username, "pilot_mail_route_changed", canceled=canceled)
+                    else:
+                        pending.delete()
                 workspace.recipient, workspace.retention_days = recipient, days
                 workspace.require_private = request.POST.get("private") == "1"
                 workspace.require_signatures = request.POST.get("signatures") == "1"
@@ -386,7 +399,9 @@ def settings_view(request, member):
                         audit(workspace, request.user.username, "test_email_queued")
             messages.success(request, "Workspace settings saved.")
             return redirect("settings", slug=workspace.slug)
-    latest_canary = Notification.objects.filter(workspace=workspace).exclude(canary_slot=None).order_by("-canary_slot").first() if settings.DS_PILOT_EBS else None
+    latest_canary = Notification.objects.filter(workspace=workspace).exclude(canary_slot=None).exclude(
+        disposition=Notification.Disposition.ROUTE_CHANGED,
+    ).order_by("-canary_slot").first() if settings.DS_PILOT_EBS else None
     return render(request, "settings.html", {
         "workspace": workspace, "member": member,
         "integration": Integration.objects.filter(workspace=workspace).first(),

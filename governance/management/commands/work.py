@@ -35,7 +35,6 @@ class Command(BaseCommand):
                 stop.wait()
             return
         next_prune = next_overdue = 0
-        last_canary = None
         with httpx.Client(timeout=httpx.Timeout(8, connect=4), follow_redirects=False, trust_env=False) as client:
             github = GitHub(client)
             while not stop.is_set():
@@ -48,9 +47,7 @@ class Command(BaseCommand):
                                 raise CommandError("Pilot activation has not been approved.")
                             stop.wait(5)
                             continue
-                        now = timezone.now()
-                        if last_canary is None or now.timestamp() // 900 > last_canary.timestamp() // 900:
-                            last_canary = enqueue_mail_canary(now)
+                        enqueue_mail_canary(timezone.now())
                     delivered = deliver_one()
                     heartbeat("email")
                     scanned = not settings.DS_PILOT_EBS and scan_one(github)

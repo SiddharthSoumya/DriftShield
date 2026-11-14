@@ -78,8 +78,10 @@ def health_payload(now):
     notifications = Notification.objects.filter(workspace=workspace)
     worker_tick = WorkerHealth.objects.filter(name="worker").values_list("updated_at", flat=True).first()
     oldest = notifications.filter(sent_at=None, failed_at=None, canary_slot=None).aggregate(value=Min("created_at"))["value"]
-    canary = notifications.exclude(canary_slot=None).order_by("-canary_slot").first()
-    failures = notifications.filter(failed_at__gte=now - timedelta(minutes=10)).count()
+    canary = notifications.exclude(canary_slot=None).exclude(
+        disposition=Notification.Disposition.ROUTE_CHANGED,
+    ).order_by("-canary_slot").first()
+    failures = notifications.filter(disposition="", failed_at__gte=now - timedelta(minutes=10)).count()
 
     def age(timestamp):
         return max(0, int((now - timestamp).total_seconds())) if timestamp else None

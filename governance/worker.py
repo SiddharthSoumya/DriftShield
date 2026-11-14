@@ -58,7 +58,12 @@ def deliver_one():
     if not item:
         return False
     if not Notification.objects.filter(pk=item.pk, lease=item.lease, workspace__recipient=item.recipient).exists():
-        Notification.objects.filter(pk=item.pk, lease=item.lease).delete()
+        claimed = Notification.objects.filter(pk=item.pk, lease=item.lease)
+        if settings.DS_PILOT_EBS:
+            claimed.update(failed_at=timezone.now(), disposition=Notification.Disposition.ROUTE_CHANGED,
+                           lease=None, lease_until=None)
+        else:
+            claimed.delete()
         return True
     now = timezone.now()
     changes = {"attempts": item.attempts + 1, "lease": None, "lease_until": None}
@@ -88,6 +93,10 @@ def enqueue_mail_canary(now):
     workspace = Workspace.objects.filter(slug=settings.DS_PILOT_WORKSPACE).first()
     if workspace is None or not workspace.recipient:
         return None
+    if Notification.objects.filter(workspace=workspace, canary_slot=slot).exclude(
+        disposition=Notification.Disposition.ROUTE_CHANGED,
+    ).exists():
+        return slot
     with transaction.atomic():
         workspace = Workspace.objects.select_for_update().get(pk=workspace.pk)
         if not workspace.recipient:

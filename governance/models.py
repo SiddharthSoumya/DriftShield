@@ -113,6 +113,11 @@ class Audit(models.Model):
 
 
 class Notification(models.Model):
+    class Disposition(models.TextChoices):
+        ROUTE_CHANGED = "route_changed", "Canceled after recipient change"
+        RECOVERY_QUARANTINE = "recovery_quarantine", "Quarantined during recovery"
+
+
     workspace = models.ForeignKey(Workspace, on_delete=models.CASCADE)
     recipient = models.EmailField()
     subject = models.CharField(max_length=200)
@@ -124,13 +129,20 @@ class Notification(models.Model):
     attempts = models.PositiveSmallIntegerField(default=0)
     sent_at = models.DateTimeField(null=True)
     failed_at = models.DateTimeField(null=True)
+    disposition = models.CharField(max_length=24, choices=Disposition, blank=True, default="")
 
     canary_slot = models.DateTimeField(null=True)
 
     class Meta:
         constraints = [
             models.UniqueConstraint(fields=["workspace", "canary_slot"],
-                                    condition=Q(canary_slot__isnull=False), name="gov_unique_canary_slot"),
+                                    condition=Q(canary_slot__isnull=False) & ~Q(disposition="route_changed"),
+                                    name="gov_unique_canary_slot"),
+            models.CheckConstraint(
+                condition=Q(disposition="") | Q(disposition__in=["route_changed", "recovery_quarantine"],
+                                                 failed_at__isnull=False, sent_at__isnull=True),
+                name="gov_notification_disposition",
+            ),
         ]
         indexes = [
             models.Index(fields=["workspace", "created_at"], condition=Q(sent_at__isnull=True, failed_at__isnull=True),

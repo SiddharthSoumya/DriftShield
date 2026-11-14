@@ -90,7 +90,8 @@ class Command(BaseCommand):
                 target.last_complete_delivery = None
                 target.save(update_fields=["last_complete_delivery"])
                 pilot_intake.open_gap(target, now, "recovery", actor=operator)
-                count = pending.update(failed_at=now, lease=None, lease_until=None)
+                count = pending.update(failed_at=now, disposition=Notification.Disposition.RECOVERY_QUARANTINE,
+                                       lease=None, lease_until=None)
                 record(target, "recovery_reconciled", operator, ticket=ticket, quarantined=count)
                 audit(workspace, operator, "pilot_recovery_reconciled", target=target.pk, ticket=ticket, quarantined=count)
         except (Conflict, Workspace.DoesNotExist, Target.DoesNotExist, ValueError, OverflowError) as error:

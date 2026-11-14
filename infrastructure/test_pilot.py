@@ -219,6 +219,44 @@ class PilotWorkflowTests(PilotFixture, TestCase):
         self.assertEqual(self.report(self.payload(1)).status_code, 401)
         self.assertFalse(Delivery.objects.exists())
 
+    @override_settings(EMAIL_HOST="relay.test")
+    def test_route_change_keeps_dispositions_and_replaces_pending_canary(self):
+        now = timezone.now()
+        slot = enqueue_mail_canary(now)
+        queued = Notification.objects.create(workspace=self.workspace, recipient=self.workspace.recipient,
+                                              subject="Drift", body="Pending alert")
+        self.client.force_login(self.approver)
+        self.client.post("/w/pilot/settings/", {"recipient": "new@example.test", "retention": 90})
+        queued.refresh_from_db()
+        self.assertEqual(queued.disposition, Notification.Disposition.ROUTE_CHANGED)
+        self.assertIsNotNone(queued.failed_at)
+        enqueue_mail_canary(now)
+        enqueue_mail_canary(now)
+        self.assertEqual(Notification.objects.filter(canary_slot=slot).count(), 2)
+        replacement = Notification.objects.get(canary_slot=slot, failed_at=None)
+        self.assertEqual(replacement.recipient, "new@example.test")
+
+    def test_route_change_waits_for_claimed_delivery(self):
+        Notification.objects.create(workspace=self.workspace, recipient=self.workspace.recipient,
+                                    subject="Drift", body="Claimed", lease=uuid4(),
+                                    lease_until=timezone.now() + timedelta(minutes=5))
+        self.client.force_login(self.approver)
+        response = self.client.post("/w/pilot/settings/", {"recipient": "new@example.test", "retention": 90}, follow=True)
+        self.assertContains(response, "Wait for the active mail delivery")
+        self.workspace.refresh_from_db()
+        self.assertEqual(self.workspace.recipient, "team@example.test")
+        self.assertIsNone(Notification.objects.get().failed_at)
+
+    @override_settings(EMAIL_HOST="relay.test")
+    def test_worker_keeps_a_stale_route_row_as_canceled(self):
+        item = Notification.objects.create(workspace=self.workspace, recipient="old@example.test",
+                                           subject="Drift", body="Previous route")
+        with patch("governance.worker.EmailMessage.send") as send_message:
+            self.assertTrue(deliver_one())
+        send_message.assert_not_called()
+        item.refresh_from_db()
+        self.assertEqual(item.disposition, Notification.Disposition.ROUTE_CHANGED)
+
     def test_cadence_and_failed_then_silent_gap(self):
         self.report(self.payload(1, coverage="failed"))
         self.report(self.payload(0))
