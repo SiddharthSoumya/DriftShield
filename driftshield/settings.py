@@ -1,4 +1,5 @@
 import os
+import re
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -132,3 +133,31 @@ GITHUB_KEY = os.environ.get("DS_GITHUB_ENCRYPTION_KEY", "")
 
 DS_INGEST_MIN_SECONDS = 60
 DS_TRUST_PROXY_CLIENT_IP = os.environ.get("DS_TRUST_PROXY_CLIENT_IP") == "1"
+
+_pilot_ebs = os.environ.get("DS_PILOT_EBS", "0")
+if _pilot_ebs not in ("0", "1"):
+    raise ImproperlyConfigured("DS_PILOT_EBS must be 0 or 1.")
+DS_PILOT_EBS = _pilot_ebs == "1"
+
+_pilot_fenced = os.environ.get("DS_PILOT_RECOVERY_FENCED", "1" if DS_PILOT_EBS else "0")
+if _pilot_fenced not in ("0", "1"):
+    raise ImproperlyConfigured("DS_PILOT_RECOVERY_FENCED must be 0 or 1.")
+DS_PILOT_RECOVERY_FENCED = _pilot_fenced == "1"
+
+_pilot_staging = os.environ.get("DS_PILOT_STAGING", "0")
+if _pilot_staging not in ("0", "1"):
+    raise ImproperlyConfigured("DS_PILOT_STAGING must be 0 or 1.")
+DS_PILOT_STAGING = _pilot_staging == "1"
+DS_PILOT_ACCEPTANCE_TICKET = os.environ.get("DS_PILOT_ACCEPTANCE_TICKET", "")
+DS_PILOT_WORKSPACE = os.environ.get("DS_PILOT_WORKSPACE", "")
+DS_PILOT_PROBE_TOKEN = os.environ.get("DS_PILOT_PROBE_TOKEN", "")
+DS_RELEASE_SHA = os.environ.get("DS_RELEASE_SHA", "")
+if DS_PILOT_EBS and not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,63}", DS_PILOT_WORKSPACE):
+    raise ImproperlyConfigured("Set DS_PILOT_WORKSPACE to the dedicated workspace slug.")
+if DS_PILOT_PROBE_TOKEN and not re.fullmatch(r"[A-Za-z0-9_-]{43,128}", DS_PILOT_PROBE_TOKEN):
+    raise ImproperlyConfigured("Use a URL-safe random DS_PILOT_PROBE_TOKEN with at least 32 bytes of entropy.")
+if DS_RELEASE_SHA and not re.fullmatch(r"[0-9a-f]{40}", DS_RELEASE_SHA):
+    raise ImproperlyConfigured("DS_RELEASE_SHA must be a full Git commit SHA.")
+
+if DS_PILOT_EBS:
+    DATA_UPLOAD_MAX_NUMBER_FIELDS = 520

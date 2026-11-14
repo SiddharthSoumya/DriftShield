@@ -1,14 +1,16 @@
 from getpass import getpass
 
+from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import ValidationError
 from django.core.management.base import BaseCommand, CommandError
 from django.core.validators import validate_slug
-from django.db import transaction
+from django.db import connection, transaction
 
 from governance.models import Membership, Workspace
 from governance.domain import audit
+from governance.pilot import WORKSPACE_LOCK
 
 
 class Command(BaseCommand):
@@ -24,6 +26,13 @@ class Command(BaseCommand):
     @transaction.atomic
     def handle(self, *args, **options):
         slug, username = options["workspace"], options["username"]
+        if settings.DS_PILOT_EBS:
+            if slug != settings.DS_PILOT_WORKSPACE or connection.vendor != "postgresql":
+                raise CommandError("Provision only the configured dedicated workspace on PostgreSQL.")
+            with connection.cursor() as cursor:
+                cursor.execute("SELECT pg_advisory_xact_lock(%s)", [WORKSPACE_LOCK])
+            if Workspace.objects.exclude(slug=slug).exists():
+                raise CommandError("A separate workspace already exists in this database.")
         name = options["name"] or slug
         limit = options["repo_limit"]
         try:

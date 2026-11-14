@@ -1,6 +1,7 @@
-from datetime import timedelta
+from datetime import timedelta, timezone as utc_timezone
 import logging
 import uuid
+from urllib.parse import urlsplit
 
 from django.conf import settings
 from django.contrib.sessions.models import Session
@@ -50,19 +51,26 @@ def scan_one(github):
 
 
 def deliver_one():
-    if not settings.EMAIL_HOST:
+    if not settings.EMAIL_HOST or (settings.DS_PILOT_EBS and settings.DS_PILOT_RECOVERY_FENCED):
         return False
     pending = Notification.objects.filter(sent_at__isnull=True, failed_at__isnull=True, next_attempt__lte=timezone.now())
     item = claim(pending.order_by("next_attempt", "id"))
     if not item:
         return False
     if not Notification.objects.filter(pk=item.pk, lease=item.lease, workspace__recipient=item.recipient).exists():
-        Notification.objects.filter(pk=item.pk, lease=item.lease).delete()
+        claimed = Notification.objects.filter(pk=item.pk, lease=item.lease)
+        if settings.DS_PILOT_EBS:
+            claimed.update(failed_at=timezone.now(), disposition=Notification.Disposition.ROUTE_CHANGED,
+                           lease=None, lease_until=None)
+        else:
+            claimed.delete()
         return True
     now = timezone.now()
     changes = {"attempts": item.attempts + 1, "lease": None, "lease_until": None}
     try:
-        message = EmailMessage(item.subject, item.body, to=[item.recipient])
+        domain = urlsplit(settings.APP_ORIGIN).hostname
+        message_id = f"<driftshield-{item.pk}-{int(item.created_at.timestamp() * 1_000_000)}@{domain}>"
+        message = EmailMessage(item.subject, item.body, to=[item.recipient], headers={"Message-ID": message_id})
         if message.send() != 1:
             raise RuntimeError("Email backend did not accept the message.")
     except Exception:
@@ -75,6 +83,28 @@ def deliver_one():
         changes["sent_at"] = now
     Notification.objects.filter(pk=item.pk, lease=item.lease).update(**changes)
     return True
+
+
+def enqueue_mail_canary(now):
+    utc_now = now.astimezone(utc_timezone.utc)
+    slot = utc_now.replace(minute=(utc_now.minute // 15) * 15, second=0, microsecond=0)
+    if not settings.EMAIL_HOST:
+        return None
+    workspace = Workspace.objects.filter(slug=settings.DS_PILOT_WORKSPACE).first()
+    if workspace is None or not workspace.recipient:
+        return None
+    if Notification.objects.filter(workspace=workspace, canary_slot=slot).exclude(
+        disposition=Notification.Disposition.ROUTE_CHANGED,
+    ).exists():
+        return slot
+    with transaction.atomic():
+        workspace = Workspace.objects.select_for_update().get(pk=workspace.pk)
+        if not workspace.recipient:
+            return None
+        notify(workspace, f"DriftShield mailbox probe {slot:%Y%m%dT%H%MZ}",
+               "Scheduled DriftShield mailbox probe.", canary_slot=slot)
+    return slot
+
 
 
 def check_overdue():
@@ -135,7 +165,10 @@ def prune():
         Scan.objects.filter(monitor__workspace=workspace, collected_at__lt=cutoff).delete()
         Audit.objects.filter(workspace=workspace, created_at__lt=cutoff).delete()
         Incident.objects.filter(monitor__workspace=workspace, closed_at__lt=cutoff).delete()
-        Notification.objects.filter(workspace=workspace, created_at__lt=cutoff).delete()
+        old = Notification.objects.filter(workspace=workspace, created_at__lt=cutoff)
+        if Target.objects.filter(workspace=workspace, profile=Target.Profile.EBS_PILOT).exists():
+            old = old.exclude(sent_at__isnull=True, failed_at__isnull=True)
+        old.delete()
     LoginAttempt.objects.filter(window_start__lt=now - timedelta(days=1)).delete()
     Session.objects.filter(expire_date__lt=now).delete()
 

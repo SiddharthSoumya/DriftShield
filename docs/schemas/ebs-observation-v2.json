@@ -1,0 +1,263 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "DriftShield AWS EBS observation v2",
+  "description": "Server also validates canonical UUIDs, enrolled source and scope, capture window, count equality and the 1 MB request limit.",
+  "oneOf": [
+    {
+      "type": "object",
+      "properties": {
+        "schema": {
+          "const": 2
+        },
+        "platform": {
+          "const": "aws"
+        },
+        "scope": {
+          "type": "string",
+          "maxLength": 160,
+          "pattern": "^[0-9]{12}:[a-z]{2}(?:-[a-z0-9]+)+-[0-9]+:ebs$"
+        },
+        "source_id": {
+          "type": "string",
+          "pattern": "^aws:[0-9]{12}:[a-z]{2}(?:-[a-z0-9]+)+-[0-9]+:ebs$"
+        },
+        "enrollment_id": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^[0-9a-f-]{36}$"
+        },
+        "credential_epoch": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2147483647
+        },
+        "delivery": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^[0-9a-f-]{36}$"
+        },
+        "started_at": {
+          "type": "string",
+          "format": "date-time",
+          "maxLength": 40
+        },
+        "captured_at": {
+          "type": "string",
+          "format": "date-time",
+          "maxLength": 40
+        },
+        "coverage": {
+          "const": "complete"
+        },
+        "projected_count": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 500
+        },
+        "resources": {
+          "type": "object",
+          "maxProperties": 500,
+          "propertyNames": {
+            "pattern": "^ebs/vol-(?:[0-9a-f]{8}|[0-9a-f]{17})$"
+          },
+          "additionalProperties": {
+            "type": "object",
+            "required": [
+              "size",
+              "volume_type",
+              "encrypted",
+              "iops",
+              "throughput"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "size": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 9007199254740991
+              },
+              "volume_type": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 2048
+              },
+              "encrypted": {
+                "type": "boolean"
+              },
+              "iops": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "throughput": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "minimum": 0,
+                "maximum": 9007199254740991
+              }
+            }
+          }
+        }
+      },
+      "required": [
+        "schema",
+        "platform",
+        "scope",
+        "source_id",
+        "enrollment_id",
+        "credential_epoch",
+        "delivery",
+        "started_at",
+        "captured_at",
+        "coverage",
+        "projected_count",
+        "resources"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "schema": {
+          "const": 2
+        },
+        "platform": {
+          "const": "aws"
+        },
+        "scope": {
+          "type": "string",
+          "maxLength": 160,
+          "pattern": "^[0-9]{12}:[a-z]{2}(?:-[a-z0-9]+)+-[0-9]+:ebs$"
+        },
+        "source_id": {
+          "type": "string",
+          "pattern": "^aws:[0-9]{12}:[a-z]{2}(?:-[a-z0-9]+)+-[0-9]+:ebs$"
+        },
+        "enrollment_id": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^[0-9a-f-]{36}$"
+        },
+        "credential_epoch": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2147483647
+        },
+        "delivery": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^[0-9a-f-]{36}$"
+        },
+        "started_at": {
+          "type": "string",
+          "format": "date-time",
+          "maxLength": 40
+        },
+        "captured_at": {
+          "type": "string",
+          "format": "date-time",
+          "maxLength": 40
+        },
+        "coverage": {
+          "const": "partial"
+        },
+        "error": {
+          "enum": [
+            "incomplete_inventory",
+            "inventory_limit",
+            "invalid_inventory"
+          ]
+        }
+      },
+      "required": [
+        "schema",
+        "platform",
+        "scope",
+        "source_id",
+        "enrollment_id",
+        "credential_epoch",
+        "delivery",
+        "started_at",
+        "captured_at",
+        "coverage",
+        "error"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "schema": {
+          "const": 2
+        },
+        "platform": {
+          "const": "aws"
+        },
+        "scope": {
+          "type": "string",
+          "maxLength": 160,
+          "pattern": "^[0-9]{12}:[a-z]{2}(?:-[a-z0-9]+)+-[0-9]+:ebs$"
+        },
+        "source_id": {
+          "type": "string",
+          "pattern": "^aws:[0-9]{12}:[a-z]{2}(?:-[a-z0-9]+)+-[0-9]+:ebs$"
+        },
+        "enrollment_id": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^[0-9a-f-]{36}$"
+        },
+        "credential_epoch": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2147483647
+        },
+        "delivery": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^[0-9a-f-]{36}$"
+        },
+        "started_at": {
+          "type": "string",
+          "format": "date-time",
+          "maxLength": 40
+        },
+        "captured_at": {
+          "type": "string",
+          "format": "date-time",
+          "maxLength": 40
+        },
+        "coverage": {
+          "const": "failed"
+        },
+        "error": {
+          "enum": [
+            "provider_denied",
+            "provider_unavailable",
+            "collector_timeout",
+            "identity_unavailable"
+          ]
+        }
+      },
+      "required": [
+        "schema",
+        "platform",
+        "scope",
+        "source_id",
+        "enrollment_id",
+        "credential_epoch",
+        "delivery",
+        "started_at",
+        "captured_at",
+        "coverage",
+        "error"
+      ],
+      "additionalProperties": false
+    }
+  ]
+}

@@ -1,0 +1,69 @@
+<section class="panel pad">
+<h2>EBS collection</h2>
+{% if recovery_fenced %}<p role="status">Recovery in progress. Changes and intake are paused.</p>{% endif %}
+{% if target.retired_at %}<p>Retired {{ target.retired_at|date:"M j, H:i T" }}. Evidence remains available.</p>{% endif %}
+<dl>
+<dt>Last collector contact</dt><dd>{{ target.last_contact_at|date:"M j, H:i T"|default:"Pending" }}</dd>
+<dt>Last complete observation</dt><dd>{{ target.last_success|date:"M j, H:i T"|default:"Pending" }}</dd>
+<dt>Freshness deadline</dt><dd>{{ deadline|date:"M j, H:i T"|default:"Pending enrollment" }}</dd>
+{% if observations %}<dt>Latest delivery</dt><dd>{{ observations.0.coverage }} {{ observations.0.failure_code }}</dd>{% endif %}
+</dl>
+{% if gaps %}
+<h3>Coverage gaps</h3>
+<ul>{% for gap in gaps %}<li>{{ gap.opened_reason }} · {{ gap.started_at|date:"M j, H:i T" }}{% if gap.ended_at %} → {{ gap.ended_at|date:"M j, H:i T" }} ({{ gap.ended_reason }}){% else %} · Open for {{ gap.started_at|timesince }}{% endif %}</li>{% endfor %}</ul>
+{% endif %}
+{% if enrollment %}<p>Runner {{ enrollment.runner_label }} · {{ enrollment.get_status_display }} · epoch {{ enrollment.credential_epoch }}.</p>{% else %}<p>Awaiting runner enrollment.</p>{% endif %}
+{% if member.role == "owner" and pilot_writable %}
+{% if enrollment %}
+<form method="post" class="inline" action="{% url 'infra_action' workspace.slug target.pk %}">{% csrf_token %}
+<button name="action" value="rotate">Rotate token</button>{% if enrollment.status == "active" %}<button name="action" value="revoke">Revoke token</button>{% endif %}
+</form>
+{% endif %}
+{% if not enrollment or enrollment.status != "active" %}
+<form method="post" class="stack" action="{% url 'infra_action' workspace.slug target.pk %}">{% csrf_token %}
+<label for="runner-label">Runner label</label><input name="runner_label" id="runner-label" maxlength="100" required>
+<label for="runner-role">STS assumed-role prefix</label><input name="expected_role_prefix" id="runner-role" maxlength="240" required>
+<label for="runner-operator">Primary runner operator</label><select id="runner-operator" name="primary_operator_id" required>{% for operator in operators %}<option value="{{ operator.user_id }}">{{ operator.user.username }}</option>{% endfor %}</select>
+<label for="enrollment-ticket">Change ticket</label><input name="ticket" id="enrollment-ticket" maxlength="120" required>
+<button name="action" value="enroll_runner">Enroll runner</button>
+</form>
+{% endif %}
+<details><summary>Retire target</summary>
+<form method="post" class="stack" action="{% url 'infra_action' workspace.slug target.pk %}">{% csrf_token %}
+<label for="retire-confirm">Type {{ target.name }}</label><input name="confirm" id="retire-confirm" required>
+<label for="retire-ticket">Change ticket</label><input name="ticket" id="retire-ticket" required maxlength="120">
+<button name="action" value="retire">Retire target</button>
+</form></details>
+{% endif %}
+</section>
+<section class="panel pad">
+<h2>Baseline approvals</h2>
+{% if pilot_complete and pilot_writable and member.role != "viewer" %}
+{% if not target.version or active %}
+<form method="post" class="stack" action="{% url 'infra_action' workspace.slug target.pk %}">{% csrf_token %}
+<input type="hidden" name="revision" value="{{ target.revision }}"><input type="hidden" name="version" value="{{ target.version }}">
+{% if target.version %}<fieldset><legend>Findings to accept</legend>{% for finding in active %}
+<label><input type="checkbox" name="finding" value="{{ finding.pk }}"> {{ finding.resource }}</label>
+{% endfor %}</fieldset>{% else %}<p>The initial proposal covers all {{ target.latest|length }} projected volumes.</p>{% endif %}
+<label for="baseline-ticket">Change ticket</label><input id="baseline-ticket" name="ticket" maxlength="120" required>
+<button name="action" value="request_baseline">Request baseline approval</button>
+</form>
+{% endif %}
+{% endif %}
+<ul>{% for approval in approvals %}<li>
+{{ approval.kind|capfirst }} · {{ approval.state }} · {{ approval.ticket }} · requested by {{ approval.requester.username }}{% if approval.approver %} · {{ approval.approver.username }} {{ approval.decided_at|date:"M j, H:i T" }}{% endif %}
+{% if approval.execution_ref %} · {{ approval.execution_ref }}{% endif %}{% if approval.decision_reason %} · {{ approval.decision_reason }}{% endif %}
+{% if approval.state == "pending" and pilot_writable and member.role == "owner" and approval.requester_id != member.user_id %}
+<form method="post" class="inline" action="{% url 'infra_action' workspace.slug target.pk %}">{% csrf_token %}
+<input type="hidden" name="approval_id" value="{{ approval.pk }}">
+<label for="decision-{{ approval.pk }}">Decision note</label><input name="decision_reason" id="decision-{{ approval.pk }}" maxlength="240">
+{% if approval.kind == "baseline" %}
+{% if pilot_complete %}<button name="action" value="approve_baseline">Approve baseline</button>{% endif %}
+<button name="action" value="reject_baseline">Reject baseline</button>
+{% else %}
+{% if pilot_complete %}<button name="action" value="approve_review">Approve review</button>{% endif %}
+<button name="action" value="reject_review">Reject review</button>
+{% endif %}
+</form>{% endif %}
+</li>{% empty %}<li>No approvals recorded.</li>{% endfor %}</ul>
+</section>

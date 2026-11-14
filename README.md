@@ -79,3 +79,7 @@ CI covers PostgreSQL regression tests, systemd installation and upgrade, ingesti
 | [Security](docs/security.md) | Trust model, security controls, and operator responsibilities |
 
 [MIT license](LICENSE). The original prototype is in the [v1 commit](https://github.com/SiddharthSoumya/DriftShield/tree/dfdf88f8fe16318f110839bb3f98db75d0e2cbbe). The [v2 branch](https://github.com/SiddharthSoumya/DriftShield/tree/driftshield-v2) contains the earlier single-operator pilot.
+
+## Dedicated AWS EBS pilot
+
+Follow the [pilot acceptance and rollback runbook](docs/pilot-acceptance.md) for the gated, read-only EBS deployment. The pilot requires a private customer-managed access path, two named owners, independent mailbox monitoring and a measured recovery drill.

@@ -1,0 +1,97 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "oneOf": [
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "collector_state",
+        "latest_canary_slot",
+        "latest_canary_relay_state",
+        "recent_terminal_failures",
+        "worker_age_seconds",
+        "last_complete_age_seconds",
+        "oldest_pending_age_seconds"
+      ],
+      "properties": {
+        "status": {
+          "enum": [
+            "healthy",
+            "unhealthy",
+            "recovery_fenced"
+          ]
+        },
+        "collector_state": {
+          "enum": [
+            "unknown",
+            "awaiting_enrollment",
+            "complete",
+            "partial",
+            "failed",
+            "stale",
+            "inactive",
+            "retired"
+          ]
+        },
+        "latest_canary_slot": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time"
+        },
+        "latest_canary_relay_state": {
+          "enum": [
+            "accepted",
+            "failed",
+            "queued",
+            null
+          ]
+        },
+        "recent_terminal_failures": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "worker_age_seconds": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "last_complete_age_seconds": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "oldest_pending_age_seconds": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status"
+      ],
+      "properties": {
+        "status": {
+          "enum": [
+            "database_unavailable",
+            "method_not_allowed",
+            "unavailable",
+            "unauthorized"
+          ]
+        }
+      }
+    }
+  ]
+}

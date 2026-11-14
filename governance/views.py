@@ -2,6 +2,7 @@ import csv
 from datetime import timedelta
 from functools import wraps
 import hashlib
+import hmac
 import json
 from ipaddress import ip_address
 import unicodedata
@@ -25,6 +26,7 @@ from django.views.decorators.http import require_POST
 
 from .domain import Conflict, INCIDENT_LABELS, approve, audit, notify
 from .github import CollectionError, FIELDS, GitHub, cipher, repo_name, signing_key
+from .pilot import activation_required, health_payload
 from .models import Audit, Baseline, Incident, Integration, LoginAttempt, Membership, Monitor, Notification, Scan, WorkerHealth, Workspace
 
 
@@ -70,6 +72,10 @@ class WorkspaceLogin(LoginView):
 @login_required
 def index(request):
     memberships = request.user.membership_set.select_related("workspace").order_by("workspace__name")
+    if settings.DS_PILOT_EBS:
+        if memberships.filter(workspace__slug=settings.DS_PILOT_WORKSPACE).exists():
+            return redirect("infra", slug=settings.DS_PILOT_WORKSPACE)
+        memberships = memberships.none()
     if memberships.count() == 1:
         return redirect("overview", slug=memberships[0].workspace.slug)
     return render(request, "index.html", {"memberships": memberships})
@@ -86,9 +92,17 @@ def member_view(*roles):
         @login_required
         @wraps(view)
         def wrapped(request, slug, *args, **kwargs):
+            if settings.DS_PILOT_EBS and slug != settings.DS_PILOT_WORKSPACE:
+                raise Http404
+            if (settings.DS_PILOT_EBS and settings.DS_PILOT_RECOVERY_FENCED
+                    and request.method not in ("GET", "HEAD", "OPTIONS")):
+                return HttpResponse("Pilot recovery in progress.", status=503)
             membership = get_object_or_404(Membership.objects.select_related("workspace"), workspace__slug=slug, user=request.user)
             if roles and membership.role not in roles:
                 return HttpResponse("This action requires a different workspace role.", status=403)
+            if (request.method not in ("GET", "HEAD", "OPTIONS")
+                    and activation_required(membership.workspace_id)):
+                return HttpResponse("Pilot activation has not been approved.", status=503)
             return view(request, membership, *args, **kwargs)
         return wrapped
     return decorator
@@ -97,6 +111,10 @@ def member_view(*roles):
 def locked_member(member, *roles):
     """Acquire workspace then membership locks before an authorized mutation."""
     workspace = get_object_or_404(Workspace.objects.select_for_update(), pk=member.workspace_id)
+    if settings.DS_PILOT_EBS and (
+        workspace.slug != settings.DS_PILOT_WORKSPACE or activation_required(workspace.pk)
+    ):
+        raise PermissionDenied
     current = Membership.objects.select_for_update().filter(pk=member.pk, workspace=workspace, user_id=member.user_id).first()
     if not current or current.role not in roles:
         raise PermissionDenied
@@ -144,6 +162,8 @@ def overview(request, member):
 @member_view("owner", "operator")
 @require_POST
 def add_public(request, member):
+    if settings.DS_PILOT_EBS:
+        raise Http404
     workspace = member.workspace
     try:
         name = repo_name(request.POST.get("repository", "").strip())
@@ -165,6 +185,8 @@ def add_public(request, member):
 @member_view("owner")
 @require_POST
 def import_repos(request, member):
+    if settings.DS_PILOT_EBS:
+        raise Http404
     workspace = member.workspace
     try:
         integration = Integration.objects.get(workspace=workspace)
@@ -343,7 +365,20 @@ def settings_view(request, member):
             with transaction.atomic():
                 workspace = locked_member(member, "owner")
                 if workspace.recipient != recipient:
-                    Notification.objects.filter(workspace=workspace, sent_at__isnull=True, failed_at__isnull=True).delete()
+                    pending = Notification.objects.filter(workspace=workspace, sent_at=None, failed_at=None)
+                    if settings.DS_PILOT_EBS:
+                        now = timezone.now()
+                        rows = list(pending.select_for_update().order_by("pk").values_list("pk", "lease_until"))
+                        if any(expiry and expiry > now for _, expiry in rows):
+                            messages.error(request, "Wait for the active mail delivery before changing the recipient.")
+                            return redirect("settings", slug=workspace.slug)
+                        canceled = pending.filter(pk__in=[pk for pk, _ in rows]).update(
+                            failed_at=now, disposition=Notification.Disposition.ROUTE_CHANGED,
+                            lease=None, lease_until=None,
+                        )
+                        audit(workspace, request.user.username, "pilot_mail_route_changed", canceled=canceled)
+                    else:
+                        pending.delete()
                 workspace.recipient, workspace.retention_days = recipient, days
                 workspace.require_private = request.POST.get("private") == "1"
                 workspace.require_signatures = request.POST.get("signatures") == "1"
@@ -364,10 +399,13 @@ def settings_view(request, member):
                         audit(workspace, request.user.username, "test_email_queued")
             messages.success(request, "Workspace settings saved.")
             return redirect("settings", slug=workspace.slug)
+    latest_canary = Notification.objects.filter(workspace=workspace).exclude(canary_slot=None).exclude(
+        disposition=Notification.Disposition.ROUTE_CHANGED,
+    ).order_by("-canary_slot").first() if settings.DS_PILOT_EBS else None
     return render(request, "settings.html", {
         "workspace": workspace, "member": member,
         "integration": Integration.objects.filter(workspace=workspace).first(),
-        "smtp": bool(settings.EMAIL_HOST),
+        "smtp": bool(settings.EMAIL_HOST), "latest_canary": latest_canary, "pilot_enabled": settings.DS_PILOT_EBS,
         "deliveries": Notification.objects.filter(workspace=workspace).order_by("-created_at")[:15],
         "members": Membership.objects.filter(workspace=workspace).select_related("user").order_by("user__username"),
     })
@@ -438,6 +476,8 @@ def health(request):
 @member_view("owner")
 def worker_health(request, member):
     thresholds = {"worker": 5, "email": 5, "github": 5, "freshness": 5, "retention": 90}
+    if settings.DS_PILOT_EBS:
+        del thresholds["github"]
     updated = dict(WorkerHealth.objects.filter(name__in=thresholds).values_list("name", "updated_at"))
     now = timezone.now()
     stages = {
@@ -448,3 +488,21 @@ def worker_health(request, member):
     healthy = all(stage["healthy"] for stage in stages.values())
     return JsonResponse({"worker": "healthy" if healthy else "overdue", "last_heartbeat": updated.get("worker"),
                          "stages": stages}, status=200 if healthy else 503)
+
+
+
+@never_cache
+def pilot_health(request):
+    if request.method not in ("GET", "HEAD"):
+        return JsonResponse({"status": "method_not_allowed"}, status=405, headers={"Allow": "GET, HEAD"})
+    if not settings.DS_PILOT_EBS:
+        return JsonResponse({"status": "unavailable"}, status=404)
+    expected = settings.DS_PILOT_PROBE_TOKEN
+    supplied = request.headers.get("Authorization", "").encode("utf-8")
+    if not expected or not hmac.compare_digest(supplied, f"Bearer {expected}".encode()):
+        return JsonResponse({"status": "unauthorized"}, status=401, headers={"WWW-Authenticate": "Bearer"})
+    try:
+        payload = health_payload(timezone.now())
+    except DatabaseError:
+        return JsonResponse({"status": "database_unavailable"}, status=503)
+    return JsonResponse(payload, status=200 if payload["status"] == "healthy" else 503)

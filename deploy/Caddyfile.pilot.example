@@ -1,0 +1,45 @@
+{
+    servers {
+        timeouts {
+            read_header 10s
+            read_body 20s
+        }
+    }
+}
+
+{$DS_PILOT_HOSTNAME} {
+    request_body {
+        max_size 1000000
+    }
+    @runner {
+        path_regexp runner ^/api/v2/infrastructure/[0-9]+/observations/$
+        method POST
+        remote_ip {$DS_PILOT_RUNNER_CIDRS}
+    }
+    @probe {
+        path /internal/pilot/healthz
+        method GET HEAD
+        remote_ip {$DS_PILOT_PROBE_CIDRS}
+    }
+    @restricted path /api/* /internal/*
+    @browser remote_ip {$DS_PILOT_EDGE_CIDRS}
+    route {
+        handle @runner {
+            reverse_proxy 127.0.0.1:8000
+        }
+        handle @probe {
+            reverse_proxy 127.0.0.1:8000
+        }
+        handle @restricted {
+            respond 404
+        }
+        handle @browser {
+            reverse_proxy 127.0.0.1:8000 {
+                header_up X-DriftShield-Client-IP {remote_host}
+            }
+        }
+        handle {
+            respond 404
+        }
+    }
+}

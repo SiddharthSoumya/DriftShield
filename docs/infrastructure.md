@@ -78,3 +78,16 @@ The dashboard and intake run on the same DriftShield server. The collector runs 
 New and rotated tokens expire after 90 days. Previously issued tokens expire 30 days after the upgrade migration. Set an owner reminder to rotate them before expiry and update the runner secret. Revocation immediately disables ingestion while retaining evidence. A rotation marks the last observation as needing revalidation until a new successful delivery arrives.
 
 Updated AWS, Docker, and Kubernetes collectors attach a source identifier. The first identified observation binds it to the target, and a mismatched or missing identifier thereafter is rejected. Docker binds the daemon identity and monitored container set. Kubernetes binds the configured API endpoint and namespace. AWS binds the account and region. These identifiers catch common configuration mistakes. They are supplied by the collector and are not independent attestations. Schedule a first run after upgrading and review its scope. If a legitimate source changes, create a new target and approve its baseline.
+
+## Enrolled EBS pilot runner
+
+Use one AWS account, region and unfiltered regional EBS inventory. The approved assumed role needs read access to describe volumes. Validate the AWS CLI version and automatic pagination during onboarding. The following command is suitable for an existing private, customer-controlled scheduler with a 30-minute cadence. Set its environment from protected local configuration and keep the token out of arguments and logs.
+
+```bash
+flock -n "$DS_PILOT_RUNNER_LOCK" python -m collector aws-ebs \
+  --scope "$DS_PILOT_EBS_SCOPE" --region "$AWS_REGION" \
+  --expected-role-prefix "$DS_PILOT_ROLE_PREFIX" \
+  --enrollment-id "$DS_PILOT_ENROLLMENT_ID" --credential-epoch "$DS_PILOT_EPOCH"
+```
+
+The collector reads `DRIFTSHIELD_ENDPOINT` and `DRIFTSHIELD_TOKEN` from the environment. Use the v2 HTTPS URL from enrollment. Confirm the account and assumed role with STS before enrollment. A partial or failed attempt does not replace the last complete inventory. Long outages can lose individual observations. The application shows the gap and requires a fresh complete observation for recovery.

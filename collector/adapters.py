@@ -111,6 +111,21 @@ AWS_CALLS = {
 }
 
 
+def ebs(document, *, include_transient=True):
+    rows = document["Volumes"]
+    if not isinstance(rows, list):
+        raise ValueError("Expected an EBS volume list.")
+    result = {}
+    for row in rows:
+        if not include_transient and row["State"] in ("deleted", "deleting"):
+            continue
+        put(result, "ebs/" + row["VolumeId"], {
+            "size": row["Size"], "volume_type": row["VolumeType"], "encrypted": row["Encrypted"],
+            "iops": row.get("Iops"), "throughput": row.get("Throughput"),
+        })
+    return result
+
+
 def aws(documents):
     result = {}
     if set(documents) != set(AWS_CALLS):
@@ -123,13 +138,7 @@ def aws(documents):
             if row["State"]["Name"] in ("terminated", "shutting-down"):
                 continue
             put(result, "ec2/" + row["InstanceId"], {"instance_type": row["InstanceType"], "state": row["State"]["Name"]})
-    for row in documents["ebs"]["Volumes"]:
-        if row["State"] in ("deleted", "deleting"):
-            continue
-        put(result, "ebs/" + row["VolumeId"], {
-            "size": row["Size"], "volume_type": row["VolumeType"], "encrypted": row["Encrypted"],
-            "iops": row.get("Iops"), "throughput": row.get("Throughput"),
-        })
+    result.update(ebs(documents["ebs"], include_transient=False))
     for row in documents["nat"]["NatGateways"]:
         if row["State"] in ("deleted", "deleting", "failed"):
             continue

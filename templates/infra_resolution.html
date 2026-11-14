@@ -1,0 +1,1 @@
+{% if finding.resolution == "observed_restoration" %}Observed restoration{% elif finding.resolution == "verified_remediation" %}Verified remediation{% elif finding.resolution == "verified" and finding.target.profile == "ebs_pilot" %}Legacy recorded verification{% else %}{{ finding.resolution|capfirst }}{% endif %}

@@ -39,6 +39,10 @@ DS_DB_PORT=5432
 # DS_SMTP_USER=
 # DS_SMTP_PASSWORD=
 # DS_FROM_EMAIL=driftshield@example.com
+# DS_PILOT_EBS=1
+# DS_PILOT_WORKSPACE=
+# DS_PILOT_PROBE_TOKEN=
+DS_PILOT_RECOVERY_FENCED=1
 CONFIG
   echo "Created $env_file. Configure your HTTPS origin, PostgreSQL credentials, and optional SMTP. Then rerun."
   exit 0
@@ -52,8 +56,34 @@ if [[ "${DS_ORIGIN:-}" == "https://driftshield.example.com" || "${DS_DEV:-}" == 
   echo "Configure the real DS_ORIGIN and remove DS_DEV before installing." >&2
   exit 1
 fi
+reviewed_sha="${DRIFTSHIELD_RELEASE_SHA:-}"
+if command -v git >/dev/null && git -C "$source_dir" rev-parse --verify HEAD >/dev/null 2>&1; then
+  actual_sha="$(git -C "$source_dir" rev-parse --verify HEAD)"
+  if git -C "$source_dir" diff --quiet HEAD -- && [[ -z "$(git -C "$source_dir" ls-files --others --exclude-standard)" ]]; then
+    if [[ -n "$reviewed_sha" && "$reviewed_sha" != "$actual_sha" ]]; then
+      echo "Requested release SHA does not match the checkout." >&2
+      exit 1
+    fi
+    reviewed_sha="$actual_sha"
+  elif [[ "${DS_PILOT_EBS:-0}" == 1 ]]; then
+    echo "Use a clean, reviewed pilot checkout." >&2
+    exit 1
+  fi
+fi
+if [[ -n "$reviewed_sha" && ! "$reviewed_sha" =~ ^[0-9a-f]{40}$ ]]; then
+  echo "DRIFTSHIELD_RELEASE_SHA must be a full Git commit SHA." >&2
+  exit 1
+fi
+if [[ "${DS_PILOT_EBS:-0}" == 1 && ( -z "$reviewed_sha" || "${DS_PILOT_RECOVERY_FENCED:-0}" != 1 ) ]]; then
+  echo "Install the reviewed pilot release with DS_PILOT_RECOVERY_FENCED=1." >&2
+  exit 1
+fi
+export DS_RELEASE_SHA="$reviewed_sha"
+previous="$(readlink -f /opt/driftshield/current || true)"
 release="$(mktemp -d /opt/driftshield/releases/release.XXXXXXXX)"
 chmod 755 "$release"
+printf '%s\n' "$reviewed_sha" > "$release/release.sha"
+printf '%s\n' "$previous" > "$release/previous-release"
 for item in manage.py requirements.txt driftshield governance infrastructure collector templates static; do
   cp -R -- "$source_dir/$item" "$release/"
 done
@@ -70,9 +100,22 @@ install -m 0755 "$source_dir/deploy/driftshieldctl" /usr/local/sbin/driftshieldc
 if [[ -L /opt/driftshield/current ]]; then
   systemctl stop driftshield-web.service driftshield-worker.service
 fi
-runuser --preserve-environment -u driftshield -- .venv/bin/python manage.py migrate --no-input
+if ! runuser --preserve-environment -u driftshield -- .venv/bin/python manage.py migrate --no-input; then
+  echo "Migration failed. Services remain stopped. Previous release: $previous" >&2
+  exit 1
+fi
+if [[ "${DS_PILOT_EBS:-0}" == 1 ]]; then
+  runuser --preserve-environment -u driftshield -- .venv/bin/python manage.py pilot_check --workspace "$DS_PILOT_WORKSPACE" --bootstrap
+fi
 ln -sfn "$release" /opt/driftshield/current.new
 mv -Tf /opt/driftshield/current.new /opt/driftshield/current
 systemctl daemon-reload
-systemctl enable --now driftshield-web.service driftshield-worker.service
-systemctl is-active driftshield-web.service driftshield-worker.service
+if [[ "${DS_PILOT_EBS:-0}" == 1 ]]; then
+  systemctl disable --now driftshield-worker.service
+  systemctl enable --now driftshield-web.service
+  systemctl is-active driftshield-web.service
+  echo "Pilot fenced. Complete docs/pilot-acceptance.md before recording production activation."
+else
+  systemctl enable --now driftshield-web.service driftshield-worker.service
+  systemctl is-active driftshield-web.service driftshield-worker.service
+fi

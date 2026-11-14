@@ -5,13 +5,17 @@ from django.utils import timezone
 
 from governance.domain import audit
 from governance.models import Membership
-from .models import DriftException, EvidenceEvent
+from .models import DriftException, EvidenceEvent, Target
 
 
 def record(target, kind, actor="collector", finding=None, **detail):
+    if target.profile == Target.Profile.EBS_PILOT:
+        detail = {"schema": 1, "actor_id": getattr(actor, "pk", None), "target_id": target.pk,
+                  "scope": target.scope, "finding_id": finding.pk if finding else None,
+                  "baseline_version": target.version, **detail}
     return EvidenceEvent.objects.create(
         target=target, finding=finding, resource=finding.resource if finding else "",
-        kind=kind, actor=actor, detail=detail,
+        kind=kind, actor=getattr(actor, "username", actor), detail=detail,
     )
 
 
