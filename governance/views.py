@@ -13,11 +13,11 @@ from django.contrib import messages
 from django.contrib.auth import logout
 from django.contrib.auth.decorators import login_required
 from django.contrib.auth.views import LoginView
-from django.core.exceptions import ValidationError
+from django.core.exceptions import PermissionDenied, ValidationError
 from django.core.validators import validate_email
-from django.db import IntegrityError, connection, transaction
+from django.db import DatabaseError, IntegrityError, connection, transaction
 from django.db.models import Count, Q
-from django.http import Http404, HttpResponse, JsonResponse
+from django.http import Http404, HttpResponse, JsonResponse, StreamingHttpResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
 from django.views.decorators.cache import never_cache
@@ -94,6 +94,15 @@ def member_view(*roles):
     return decorator
 
 
+def locked_member(member, *roles):
+    """Acquire workspace then membership locks before an authorized mutation."""
+    workspace = get_object_or_404(Workspace.objects.select_for_update(), pk=member.workspace_id)
+    current = Membership.objects.select_for_update().filter(pk=member.pk, workspace=workspace, user_id=member.user_id).first()
+    if not current or current.role not in roles:
+        raise PermissionDenied
+    return workspace
+
+
 def state(monitor, now):
     if monitor.paused:
         return "Paused", "muted"
@@ -139,7 +148,7 @@ def add_public(request, member):
     try:
         name = repo_name(request.POST.get("repository", "").strip())
         with transaction.atomic():
-            workspace = Workspace.objects.select_for_update().get(pk=workspace.pk)
+            workspace = locked_member(member, "owner", "operator")
             if Monitor.objects.filter(workspace=workspace).count() >= workspace.repo_limit:
                 raise Conflict("Workspace repository limit reached.")
             monitor = Monitor.objects.create(workspace=workspace, full_name=name, interval_minutes=60)
@@ -165,7 +174,7 @@ def import_repos(request, member):
             token = github.token(integration.app_id, signing_key(pem), integration.installation_id)
             records = github.inventory(token)
         with transaction.atomic():
-            workspace = Workspace.objects.select_for_update().get(pk=workspace.pk)
+            workspace = locked_member(member, "owner")
             current = Integration.objects.get(workspace=workspace)
             if current.pk != integration.pk or bytes(current.encrypted_key) != bytes(integration.encrypted_key):
                 raise Conflict("GitHub installation changed during import. Try again.")
@@ -248,8 +257,10 @@ def monitor_action(request, member, pk):
     action = request.POST.get("action")
     if action == "approve":
         try:
-            approve(workspace, pk, request.user.username, int(request.POST.get("revision", "")),
-                    int(request.POST.get("version", "")), request.POST.getlist("field"), request.POST.get("reason", ""))
+            with transaction.atomic():
+                workspace = locked_member(member, "owner", "operator")
+                approve(workspace, pk, request.user.username, int(request.POST.get("revision", "")),
+                        int(request.POST.get("version", "")), request.POST.getlist("field"), request.POST.get("reason", ""))
         except Monitor.DoesNotExist as error:
             raise Http404 from error
         except Conflict as error:
@@ -260,7 +271,7 @@ def monitor_action(request, member, pk):
             messages.success(request, "Baseline version recorded.")
     else:
         with transaction.atomic():
-            workspace = Workspace.objects.select_for_update().get(pk=workspace.pk)
+            workspace = locked_member(member, "owner", "operator")
             monitor = get_object_or_404(Monitor.objects.select_for_update(), pk=pk, workspace=workspace)
             if action == "scan":
                 if not monitor.paused and monitor.next_scan > timezone.now() and (
@@ -302,7 +313,7 @@ def monitor_action(request, member, pk):
 def remove_monitor(request, member, pk):
     workspace = member.workspace
     with transaction.atomic():
-        workspace = Workspace.objects.select_for_update().get(pk=workspace.pk)
+        workspace = locked_member(member, "owner")
         monitor = get_object_or_404(Monitor.objects.select_for_update(), pk=pk, workspace=workspace)
         if request.POST.get("confirm") != monitor.full_name:
             messages.error(request, "Enter the exact repository name to remove the monitor.")
@@ -330,7 +341,7 @@ def settings_view(request, member):
             messages.error(request, "Enter a valid email, a retention period from 7 to 365 days, and 0–10 required approvals.")
         else:
             with transaction.atomic():
-                workspace = Workspace.objects.select_for_update().get(pk=workspace.pk)
+                workspace = locked_member(member, "owner")
                 if workspace.recipient != recipient:
                     Notification.objects.filter(workspace=workspace, sent_at__isnull=True, failed_at__isnull=True).delete()
                 workspace.recipient, workspace.retention_days = recipient, days
@@ -343,7 +354,13 @@ def settings_view(request, member):
                       require_private=workspace.require_private, require_signatures=workspace.require_signatures,
                       digest_weekly=workspace.digest_weekly)
                 if request.POST.get("test") and recipient and settings.EMAIL_HOST:
-                    notify(workspace, "DriftShield test notification", "Your workspace notification route is working.")
+                    recent_test = Audit.objects.filter(workspace=workspace, action="test_email_queued",
+                                                       created_at__gte=timezone.now() - timedelta(minutes=10)).exists()
+                    if recent_test:
+                        messages.warning(request, "A test email was already queued in the last ten minutes.")
+                    else:
+                        notify(workspace, "DriftShield test notification", "Your workspace notification route is working.")
+                        audit(workspace, request.user.username, "test_email_queued")
             messages.success(request, "Workspace settings saved.")
             return redirect("settings", slug=workspace.slug)
     return render(request, "settings.html", {
@@ -369,22 +386,42 @@ def audit_log(request, member):
     return render(request, "audit.html", {"workspace": member.workspace, "member": member, "entries": entries})
 
 
+class CsvLine:
+    def write(self, value):
+        return value
+
+
+def csv_download(filename, headers, rows):
+    def stream():
+        writer = csv.writer(CsvLine())
+        yield writer.writerow(headers)
+        for row in rows:
+            yield writer.writerow([csv_value(value) for value in row])
+
+    response = StreamingHttpResponse(stream(), content_type="text/csv")
+    response["Content-Disposition"] = f'attachment; filename="{filename}"'
+    response["X-DriftShield-Export-Limit"] = "10000"
+    return response
+
+
 @member_view()
 def evidence(request, member):
-    response = HttpResponse(content_type="text/csv")
-    response["Content-Disposition"] = 'attachment; filename="driftshield-evidence.csv"'
-    writer = csv.writer(response)
-    writer.writerow(["Repository", "Field", "Severity", "Expected", "Observed", "Baseline", "First seen", "Last seen", "Occurrences", "Acknowledged at", "Closed at", "Resolution"])
     queryset = Incident.objects.filter(monitor__workspace=member.workspace).select_related("monitor").order_by("-first_seen", "-pk")
-    response["X-DriftShield-Export-Limit"] = "10000"
-    for item in queryset[:10000].iterator():
-        writer.writerow([csv_value(value) for value in (
-            item.monitor.full_name, item.field, item.severity, json.dumps(item.expected), json.dumps(item.observed),
-            item.baseline_version, item.first_seen.isoformat(), item.last_seen.isoformat(), item.occurrences,
-            item.acknowledged_at.isoformat() if item.acknowledged_at else "",
-            item.closed_at.isoformat() if item.closed_at else "", item.resolution,
-        )])
-    return response
+    rows = (
+        (item.monitor.full_name, item.field, item.severity, json.dumps(item.expected), json.dumps(item.observed),
+         item.baseline_version, item.first_seen.isoformat(), item.last_seen.isoformat(), item.occurrences,
+         item.acknowledged_at.isoformat() if item.acknowledged_at else "",
+         item.closed_at.isoformat() if item.closed_at else "", item.resolution)
+        for item in queryset[:10000].iterator(chunk_size=100)
+    )
+    return csv_download("driftshield-evidence.csv",
+                        ["Repository", "Field", "Severity", "Expected", "Observed", "Baseline", "First seen",
+                         "Last seen", "Occurrences", "Acknowledged at", "Closed at", "Resolution"], rows)
+
+
+@never_cache
+def live(request):
+    return JsonResponse({"status": "ok"})
 
 
 @never_cache
@@ -392,13 +429,21 @@ def health(request):
     try:
         with connection.cursor() as cursor:
             cursor.execute("SELECT 1")
-    except Exception:
+    except DatabaseError:
         return JsonResponse({"status": "unavailable"}, status=503)
     return JsonResponse({"status": "ok"})
 
 
 @member_view("owner")
 def worker_health(request, member):
-    updated = WorkerHealth.objects.filter(name="worker").values_list("updated_at", flat=True).first()
-    healthy = updated is not None and timezone.now() - updated < timedelta(minutes=5)
-    return JsonResponse({"worker": "healthy" if healthy else "overdue", "last_heartbeat": updated}, status=200 if healthy else 503)
+    thresholds = {"worker": 5, "email": 5, "github": 5, "freshness": 5, "retention": 90}
+    updated = dict(WorkerHealth.objects.filter(name__in=thresholds).values_list("name", "updated_at"))
+    now = timezone.now()
+    stages = {
+        name: {"last_successful_tick": updated.get(name),
+               "healthy": name in updated and now - updated[name] < timedelta(minutes=minutes)}
+        for name, minutes in thresholds.items()
+    }
+    healthy = all(stage["healthy"] for stage in stages.values())
+    return JsonResponse({"worker": "healthy" if healthy else "overdue", "last_heartbeat": updated.get("worker"),
+                         "stages": stages}, status=200 if healthy else 503)

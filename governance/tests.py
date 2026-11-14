@@ -63,6 +63,27 @@ class WorkflowTests(TestCase):
         csrf.force_login(self.owner)
         self.assertEqual(csrf.post(url, {"action": "pause"}).status_code, 403)
 
+    def test_worker_health_detects_failed_stage(self):
+        from .worker import heartbeat
+
+        url = reverse("worker_health", args=["pilot"])
+        for stage in ("worker", "email", "github", "freshness"):
+            heartbeat(stage)
+        self.assertEqual(self.client.get(url).status_code, 503)
+        heartbeat("retention")
+        self.assertEqual(self.client.get(url).status_code, 200)
+
+    def test_write_authority_is_rechecked_after_workspace_lock(self):
+        from django.core.exceptions import PermissionDenied
+        from django.db import transaction
+
+        from .views import locked_member
+
+        member = Membership.objects.get(workspace=self.workspace, user=self.owner)
+        Membership.objects.filter(pk=member.pk).update(role="viewer")
+        with transaction.atomic(), self.assertRaises(PermissionDenied):
+            locked_member(member, "owner")
+
     def test_dashboard_and_scan_workflow(self):
         self.assertContains(self.client.get("/w/pilot/"), "Repository overview")
         self.observe(VALUES)
@@ -75,7 +96,8 @@ class WorkflowTests(TestCase):
         incident = Incident.objects.get(monitor=self.monitor)
         self.assertEqual(incident.severity, "critical")
         self.assertContains(self.client.post(url, {"action": "ack", "incident": incident.pk}, follow=True), "Acknowledged")
-        self.assertContains(self.client.get(reverse("evidence", args=["pilot"])), "visibility")
+        response = self.client.get(reverse("evidence", args=["pilot"]))
+        self.assertIn(b"visibility", b"".join(response.streaming_content))
         self.observe(VALUES)
         incident.refresh_from_db()
         self.assertEqual(incident.resolution, "restored")

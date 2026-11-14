@@ -31,7 +31,8 @@ DS_DB_USER=driftshield
 DS_DB_PASSWORD=
 DS_DB_HOST=127.0.0.1
 DS_DB_PORT=5432
-DS_DB_SSLMODE=prefer
+# DS_DB_SSLMODE=verify-full
+# DS_DB_SSLROOTCERT=/etc/driftshield/db-ca.pem
 # DS_TRUST_PROXY_CLIENT_IP=1
 # DS_SMTP_HOST=smtp.example.com
 # DS_SMTP_PORT=587
@@ -59,7 +60,7 @@ done
 install -m 0755 "$source_dir/deploy/service-launch" "$release/service-launch"
 find "$release" -name '__pycache__' -type d -prune -exec rm -r -- {} +
 "$python_bin" -m venv "$release/.venv"
-"$release/.venv/bin/python" -m pip install --disable-pip-version-check -r "$release/requirements.txt"
+"$release/.venv/bin/python" -m pip install --disable-pip-version-check --only-binary=:all: -r "$release/requirements.txt"
 cd "$release"
 .venv/bin/python manage.py check --deploy --fail-level WARNING
 .venv/bin/python manage.py collectstatic --no-input

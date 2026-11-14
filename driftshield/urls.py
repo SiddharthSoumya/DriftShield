@@ -13,6 +13,7 @@ urlpatterns = [
     path("w/<slug:slug>/infra/evidence.csv", infra.evidence, name="infra_evidence"),
     path("w/<slug:slug>/infra/<int:pk>/", infra.detail, name="infra_detail"),
     path("w/<slug:slug>/infra/<int:pk>/action/", infra.action, name="infra_action"),
+    path("livez", views.live, name="live"),
     path("healthz", views.health, name="health"),
     path("w/<slug:slug>/", views.overview, name="overview"),
     path("w/<slug:slug>/repos/add/", views.add_public, name="add_public"),

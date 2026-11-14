@@ -95,13 +95,20 @@ def validate_values(resources):
 
 
 def envelope(data, now):
-    if not isinstance(data, dict) or set(data) not in (
+    if not isinstance(data, dict):
+        raise ValueError("Unknown observation envelope.")
+    core_fields = set(data) - {"source_id"}
+    if core_fields not in (
         {"schema", "platform", "scope", "delivery", "captured_at", "resources"},
         {"schema", "platform", "scope", "delivery", "captured_at", "error"},
     ):
         raise ValueError("Unknown observation envelope.")
     if type(data["schema"]) is not int or data["schema"] != 1 or data["platform"] not in tuple(PLATFORMS):
         raise ValueError("Unsupported schema or platform.")
+    if "source_id" in data:
+        source_id = data["source_id"]
+        if not isinstance(source_id, str) or len(source_id) > 160 or not IDENTIFIER.fullmatch(source_id) or "error" in data:
+            raise ValueError("Invalid source identifier.")
     scope = data["scope"]
     if not isinstance(scope, str) or len(scope) > 160 or not IDENTIFIER.fullmatch(scope):
         raise ValueError("Invalid scope.")

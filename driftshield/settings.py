@@ -11,13 +11,14 @@ APP_ORIGIN = os.environ.get("DS_ORIGIN", "http://127.0.0.1:8000" if DEBUG else "
 origin = urlsplit(APP_ORIGIN)
 if not DEBUG and (len(SECRET_KEY) < 50 or origin.scheme != "https" or not origin.hostname):
     raise ImproperlyConfigured("Set a random DS_SECRET_KEY (50+ characters) and HTTPS DS_ORIGIN.")
-if origin.path or origin.query or origin.fragment or origin.username:
+if origin.path or origin.query or origin.fragment or origin.username or not origin.hostname:
     raise ImproperlyConfigured("DS_ORIGIN must be a scheme and hostname only.")
 ALLOWED_HOSTS = [origin.hostname] + (["localhost", "testserver", "127.0.0.1"] if DEBUG else ["127.0.0.1"])
 CSRF_TRUSTED_ORIGINS = [APP_ORIGIN]
 SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
 SECURE_SSL_REDIRECT = not DEBUG
-SECURE_REDIRECT_EXEMPT = [r"^healthz$"]
+SECURE_REDIRECT_EXEMPT = [r"^healthz$", r"^livez$"]
+SECURE_SSL_HOST = origin.netloc if not DEBUG else None
 SECURE_HSTS_SECONDS = 31536000 if not DEBUG else 0
 # The installer does not control the deployment hostname's child domains or preload status.
 SILENCED_SYSTEM_CHECKS = ["security.W005", "security.W021"]
@@ -27,6 +28,7 @@ CSRF_COOKIE_SECURE = not DEBUG
 SESSION_COOKIE_AGE = 43200
 SESSION_COOKIE_HTTPONLY = True
 SESSION_COOKIE_SAMESITE = "Lax"
+CSRF_COOKIE_SAMESITE = "Lax"
 X_FRAME_OPTIONS = "DENY"
 DATA_UPLOAD_MAX_MEMORY_SIZE = 32768
 DATA_UPLOAD_MAX_NUMBER_FIELDS = 100
@@ -73,14 +75,23 @@ STORAGES = {
 if DEBUG:
     STORAGES["staticfiles"] = {"BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage"}
 if os.environ.get("DS_DB_NAME"):
+    db_host = os.environ.get("DS_DB_HOST", "127.0.0.1")
+    local_database = db_host in ("localhost", "127.0.0.1", "::1") or db_host.startswith("/")
+    db_sslmode = os.environ.get("DS_DB_SSLMODE", "prefer" if local_database else "verify-full")
+    if not DEBUG and not local_database and db_sslmode != "verify-full":
+        raise ImproperlyConfigured("Remote PostgreSQL requires DS_DB_SSLMODE=verify-full in production.")
+    db_options = {"sslmode": db_sslmode, "connect_timeout": 5,
+                  "options": "-c lock_timeout=5000 -c statement_timeout=30000"}
+    if os.environ.get("DS_DB_SSLROOTCERT"):
+        db_options["sslrootcert"] = os.environ["DS_DB_SSLROOTCERT"]
     DATABASES = {"default": {
         "ENGINE": "django.db.backends.postgresql",
         "NAME": os.environ["DS_DB_NAME"],
         "USER": os.environ.get("DS_DB_USER", "driftshield"),
         "PASSWORD": os.environ.get("DS_DB_PASSWORD", ""),
-        "HOST": os.environ.get("DS_DB_HOST", "127.0.0.1"),
+        "HOST": db_host,
         "PORT": os.environ.get("DS_DB_PORT", "5432"),
-        "OPTIONS": {"sslmode": os.environ.get("DS_DB_SSLMODE", "prefer"), "connect_timeout": 5},
+        "OPTIONS": db_options,
     }}
 elif DEBUG:
     DATABASES = {"default": {
@@ -108,7 +119,13 @@ EMAIL_HOST = os.environ.get("DS_SMTP_HOST", "")
 EMAIL_PORT = int(os.environ.get("DS_SMTP_PORT", "587"))
 EMAIL_HOST_USER = os.environ.get("DS_SMTP_USER", "")
 EMAIL_HOST_PASSWORD = os.environ.get("DS_SMTP_PASSWORD", "")
-EMAIL_USE_TLS = os.environ.get("DS_SMTP_TLS", "1") == "1"
+EMAIL_USE_SSL = os.environ.get("DS_SMTP_SSL") == "1"
+EMAIL_USE_TLS = os.environ.get("DS_SMTP_TLS", "0" if EMAIL_USE_SSL else "1") == "1"
+if EMAIL_USE_SSL and EMAIL_USE_TLS:
+    raise ImproperlyConfigured("Choose SMTP STARTTLS or implicit TLS.")
+if not DEBUG and EMAIL_HOST and not (EMAIL_USE_TLS or EMAIL_USE_SSL):
+    if EMAIL_HOST not in ("localhost", "127.0.0.1", "::1") or EMAIL_HOST_USER or EMAIL_HOST_PASSWORD:
+        raise ImproperlyConfigured("Production SMTP requires TLS unless using a local unauthenticated relay.")
 EMAIL_TIMEOUT = 12
 DEFAULT_FROM_EMAIL = os.environ.get("DS_FROM_EMAIL", "DriftShield <driftshield@localhost>")
 GITHUB_KEY = os.environ.get("DS_GITHUB_ENCRYPTION_KEY", "")

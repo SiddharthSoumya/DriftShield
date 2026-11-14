@@ -5,7 +5,7 @@ set -a
 source /etc/driftshield/service.env
 set +a
 case "${1:-}" in
-  web) exec .venv/bin/gunicorn driftshield.wsgi:application --bind 127.0.0.1:8000 --workers 2 --timeout 45 --access-logfile - ;;
+  web) exec .venv/bin/gunicorn driftshield.wsgi:application --bind 127.0.0.1:8000 --workers 2 --timeout 45 --access-logfile - --access-logformat '%(h)s %(m)s %(U)s %(s)s %(D)s' ;;
   worker) exec .venv/bin/python manage.py work ;;
   manage) shift; exec .venv/bin/python manage.py "$@" ;;
   *) exit 2 ;;

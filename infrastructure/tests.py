@@ -16,7 +16,7 @@ from collector import adapters
 from collector.__main__ import main
 from collector.contract import MAX_BODY, decode, validate_values
 from governance.models import Audit, Membership, Notification, Workspace
-from .domain import issue_token, maintenance
+from .domain import check_overdue, issue_token
 from .models import Baseline, Delivery, Finding, Target
 
 
@@ -32,7 +32,8 @@ class TargetTests(TestCase):
         Membership.objects.create(workspace=cls.workspace, user=cls.viewer, role="viewer")
         cls.token, token_hash = issue_token()
         cls.target = Target.objects.create(workspace=cls.workspace, name="production", platform="aws",
-                                           scope="123456789012:us-east-1", token_hash=token_hash)
+                                           scope="123456789012:us-east-1", token_hash=token_hash,
+                                           token_expires_at=timezone.now() + timedelta(days=1))
 
     def setUp(self):
         self.client.force_login(self.owner)
@@ -75,7 +76,8 @@ class TargetTests(TestCase):
         self.assertEqual(self.post(self.payload(seconds=3)).json()["status"], "match")
         finding.refresh_from_db()
         self.assertEqual(finding.resolution, "verified")
-        self.assertContains(self.client.get("/w/alpha/infra/evidence.csv"), "CHG-12")
+        response = self.client.get("/w/alpha/infra/evidence.csv")
+        self.assertIn(b"CHG-12", b"".join(response.streaming_content))
 
     def test_accept_selected_and_reject_stale_approval(self):
         self.post(self.payload())
@@ -89,6 +91,26 @@ class TargetTests(TestCase):
             "ebs/vol-1": self.volume(50), "ebs/vol-2": self.volume(100),
         })
         self.assertTrue(Finding.objects.filter(resource="ebs/vol-1", closed_at__isnull=True).exists())
+
+    def test_observed_source_cannot_change_silently(self):
+        self.assertEqual(self.post(self.payload(source_id="aws:account-a")).status_code, 200)
+        self.action("approve")
+        self.assertEqual(self.post(self.payload({}, seconds=2, source_id="aws:account-b")).status_code, 409)
+        self.assertEqual(self.post(self.payload({}, seconds=3)).status_code, 409)
+        self.target.refresh_from_db()
+        self.assertEqual(self.target.source_id, "aws:account-a")
+        self.assertEqual(self.target.revision, 1)
+        self.assertFalse(Finding.objects.exists())
+
+    def test_expiry_and_revocation_preserve_evidence(self):
+        self.post(self.payload())
+        self.action("approve")
+        Target.objects.filter(pk=self.target.pk).update(token_expires_at=timezone.now() - timedelta(seconds=1))
+        self.assertEqual(self.post(self.payload(seconds=2)).status_code, 401)
+        self.assertContains(self.client.get(self.detail), "Collector credential inactive")
+        self.assertContains(self.action("revoke"), "credential revoked")
+        self.assertEqual(self.post(self.payload(seconds=3)).status_code, 401)
+        self.assertEqual(Baseline.objects.count(), 1)
 
     def test_errors_preserve_state_and_out_of_order_is_rejected(self):
         self.post(self.payload())
@@ -152,7 +174,7 @@ class TargetTests(TestCase):
     def test_overdue_alert_is_deduplicated(self):
         Target.objects.update(created_at=self.now - timedelta(days=1))
         for _ in range(2):
-            maintenance(self.workspace, self.now - timedelta(days=90), self.now)
+            check_overdue(self.now)
         self.assertEqual(Notification.objects.filter(subject__contains="overdue").count(), 1)
 
     def test_add_rejects_invalid_aws_scope_and_audits_good_scope(self):
@@ -261,7 +283,8 @@ class ConcurrentIngestionTests(TransactionTestCase):
             self.skipTest("Requires PostgreSQL row locks.")
         workspace = Workspace.objects.create(slug="race", name="Race")
         token, hashed = issue_token()
-        target = Target.objects.create(workspace=workspace, name="race", platform="snapshot", scope="race", token_hash=hashed)
+        target = Target.objects.create(workspace=workspace, name="race", platform="snapshot", scope="race", token_hash=hashed,
+                                       token_expires_at=timezone.now() + timedelta(days=1))
         payload = {"schema": 1, "platform": "snapshot", "scope": "race", "delivery": str(uuid4()),
                    "captured_at": timezone.now().isoformat(), "resources": {"r": {"enabled": True}}}
 
