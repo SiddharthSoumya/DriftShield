@@ -8,6 +8,7 @@ class Workspace(models.Model):
     slug = models.SlugField(max_length=64, unique=True)
     name = models.CharField(max_length=100)
     recipient = models.EmailField(blank=True)
+    infra_high_priority_only = models.BooleanField(default=False)
     retention_days = models.PositiveSmallIntegerField(default=90)
     repo_limit = models.PositiveSmallIntegerField(default=25)
     require_private = models.BooleanField(default=False)

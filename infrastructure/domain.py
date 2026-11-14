@@ -10,7 +10,8 @@ from django.utils import timezone
 from collector.contract import MAX_RESOURCES
 from governance.domain import audit, notify
 from governance.models import Workspace
-from .models import Baseline, Delivery, Finding, Target
+from .models import Baseline, Delivery, DriftException, EvidenceEvent, Finding, Target
+from .triage import effective_changes, record, resource_changes
 
 
 class Conflict(Exception):
@@ -42,6 +43,8 @@ def status(target, now):
         return "Awaiting observation", "muted"
     if getattr(target, "open_count", 0):
         return "Drift detected", "danger"
+    if getattr(target, "suppressed_count", 0):
+        return "Excepted drift", "warning"
     if not target.version:
         return "Needs baseline", "warning"
     return "Matches baseline", "good"
@@ -73,19 +76,48 @@ def same(left, right):
     return json.dumps(left, sort_keys=True) == json.dumps(right, sort_keys=True)
 
 
-def compare(target, expected, now):
-    current = {item.resource: item for item in Finding.objects.filter(target=target, closed_at__isnull=True)}
-    opened = 0
-    changed = False
+def compare(target, expected, now, captured, count_observation=True):
+    current = {
+        item.resource: item
+        for item in Finding.objects.filter(target=target, closed_at__isnull=True)
+    }
+    exceptions = {}
+    for item in DriftException.objects.filter(target=target, ended_at__isnull=True, expires_at__gt=now):
+        exceptions.setdefault(item.resource, {})[item.field] = item
+    actionable = 0
+    excepted = 0
+    newly_actionable = []
     for key in sorted(expected.keys() | target.latest.keys() | current.keys()):
         before, after, finding = expected.get(key), target.latest.get(key), current.get(key)
         different = not same(before, after)
-        changed |= different
+        suppressed = different and before is not None and after is not None and not effective_changes(
+            before, after, exceptions.get(key, {}), same,
+        )
+        if different:
+            if suppressed:
+                excepted += 1
+            else:
+                actionable += 1
         if finding and different and same(finding.expected, before) and same(finding.actual, after):
-            finding.count += 1
-            finding.last_seen = now
-            finding.save(update_fields=["count", "last_seen"])
+            if count_observation:
+                finding.count += 1
+                finding.last_seen = now
+            if finding.suppressed != suppressed:
+                finding.suppressed = suppressed
+                record(target, "excepted" if suppressed else "reopened", finding=finding,
+                       revision=target.revision)
+                if not suppressed:
+                    newly_actionable.append(finding)
+            finding.save(update_fields=["count", "last_seen", "suppressed"])
             continue
+        if finding and not different and finding.review_at and captured <= finding.review_at:
+            # A delivery captured before the human review cannot confirm the reviewed fix.
+            if not finding.suppressed:
+                actionable += 1
+            else:
+                excepted += 1
+            continue
+        inherited_owner_id = finding.owner_id if finding else None
         if finding:
             finding.closed_at = now
             if different:
@@ -95,13 +127,25 @@ def compare(target, expected, now):
             else:
                 finding.resolution = "verified" if finding.review_at else "restored"
             finding.save(update_fields=["closed_at", "resolution"])
+            record(target, "closed", finding=finding, resolution=finding.resolution, revision=target.revision)
         if different:
-            Finding.objects.create(target=target, resource=key, expected=before, actual=after, priority=risk(before, after),
-                                   first_seen=now, last_seen=now)
-            opened += 1
-    if opened:
-        alert(target, "Infrastructure drift", f"{opened} new or changed infrastructure findings.")
-    return changed
+            current_finding = Finding.objects.create(
+                target=target, resource=key, expected=before, actual=after, priority=risk(before, after),
+                first_seen=now, last_seen=now, suppressed=suppressed, baseline_version=target.version,
+                owner_id=inherited_owner_id,
+            )
+            record(target, "opened", finding=current_finding, revision=target.revision,
+                   baseline_version=target.version, priority=current_finding.priority, suppressed=suppressed)
+            if not suppressed:
+                newly_actionable.append(current_finding)
+    if target.workspace.infra_high_priority_only:
+        newly_actionable = [item for item in newly_actionable if item.priority == "high"]
+    if newly_actionable:
+        highest = "high" if any(item.priority == "high" for item in newly_actionable) else "medium"
+        alert(target, f"{highest.capitalize()} priority infrastructure drift",
+              f"{len(newly_actionable)} new, changed, or newly actionable infrastructure findings. "
+              f"Source observation: {captured.isoformat()}.")
+    return "drift" if actionable else "excepted" if excepted else "match"
 
 
 def accept(target, delivery, captured, payload, now):
@@ -134,11 +178,12 @@ def accept(target, delivery, captured, payload, now):
             target.source_id = payload["source_id"]
         result = "unbaselined"
         if target.platform == "terraform":
-            changed = compare(target, {}, now)
-            result = "drift" if changed else "match" if target.version else "unbaselined"
+            result = compare(target, {}, now, captured)
+            if result == "match" and not target.version:
+                result = "unbaselined"
         elif target.version:
             baseline = Baseline.objects.get(target=target, version=target.version)
-            result = "drift" if compare(target, baseline.values, now) else "match"
+            result = compare(target, baseline.values, now, captured)
     target.save()
     Delivery.objects.create(target=target, identifier=delivery, captured_at=captured, received_at=now,
                             status=result, payload_hash=fingerprint(payload))
@@ -159,6 +204,8 @@ def approve(target, revision, version, selected, actor, reason):
         raise Conflict("Enter an approval reason.")
     if target.platform == "terraform" and (version or target.latest):
         raise Conflict("Terraform's refreshed state must match the recorded state before a baseline can be approved. Review this plan in your IaC workflow.")
+    if any(not 0 < pk < 2**63 for pk in selected):
+        raise Conflict("Select current findings to approve.")
     if version:
         previous = Baseline.objects.get(target=target, version=version).values
         findings = Finding.objects.filter(target=target, pk__in=selected, closed_at__isnull=True)
@@ -166,24 +213,62 @@ def approve(target, revision, version, selected, actor, reason):
             raise Conflict("Select current findings to approve.")
         values = previous.copy()
         for finding in findings:
+            if finding.suppressed or not same(target.latest.get(finding.resource), finding.actual):
+                raise Conflict("This finding is excepted or has a newer observation. Review the current configuration.")
+            active_exceptions = DriftException.objects.filter(
+                target=target, resource=finding.resource, ended_at__isnull=True, expires_at__gt=now,
+            )
+            changed_fields = resource_changes(finding.expected, finding.actual, same)
+            if active_exceptions.filter(field__in=[change["field"] for change in changed_fields]).exists():
+                raise Conflict("End active exceptions for these fields before accepting this resource.")
             if finding.actual is None:
                 values.pop(finding.resource, None)
             else:
                 values[finding.resource] = finding.actual
         if len(values) > MAX_RESOURCES:
             raise Conflict("The resulting baseline exceeds the resource limit. Accept removals first or split the target.")
+        for finding in findings:
+            record(target, "closed", actor, finding, resolution="accepted", revision=target.revision)
         findings.update(closed_at=now, resolution="accepted")
     else:
         values = target.latest
     target.version += 1
     Baseline.objects.create(target=target, version=target.version, values=values, actor=actor, reason=reason.strip())
     target.save(update_fields=["version"])
+    record(target, "baseline_approved", actor, version=target.version, revision=target.revision, reason=reason.strip())
     audit(target.workspace, actor, "infra_baseline_approved", target=target.name, version=target.version, reason=reason.strip())
+
+
+def refresh_exceptions(target, now):
+    if target.version and target.last_success and target.platform != "terraform":
+        baseline = Baseline.objects.get(target=target, version=target.version)
+        compare(target, baseline.values, now, target.last_success, count_observation=False)
+
+
+def expire_exceptions(now):
+    target_ids = DriftException.objects.filter(ended_at__isnull=True, expires_at__lte=now).values_list(
+        "target_id", "target__workspace_id",
+    ).order_by("target_id").distinct()[:100]
+    for target_id, workspace_id in list(target_ids):
+        with transaction.atomic():
+            workspace = Workspace.objects.select_for_update().filter(pk=workspace_id).first()
+            if not workspace:
+                continue
+            target = Target.objects.select_for_update().filter(pk=target_id, workspace=workspace).first()
+            if not target:
+                continue
+            expired = DriftException.objects.filter(target=target, ended_at__isnull=True, expires_at__lte=now)
+            for item in expired:
+                record(target, "exception_expired", "worker", field=item.field, resource_id=item.resource, exception=item.pk)
+            expired.update(ended_at=now)
+            refresh_exceptions(target, now)
 
 
 def maintenance(workspace, cutoff):
     Delivery.objects.filter(target__workspace=workspace, received_at__lt=cutoff).delete()
     Finding.objects.filter(target__workspace=workspace, closed_at__lt=cutoff).delete()
+    EvidenceEvent.objects.filter(target__workspace=workspace, created_at__lt=cutoff).delete()
+    DriftException.objects.filter(target__workspace=workspace, ended_at__isnull=False, expires_at__lt=cutoff).delete()
 
 
 def check_overdue(now):

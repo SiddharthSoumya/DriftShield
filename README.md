@@ -6,7 +6,7 @@ DriftShield compares approved configuration with observations from Terraform/Ope
 
 - **Infrastructure:** Terraform/OpenTofu refresh summaries, Docker runtime configuration, Kubernetes workloads and scaling, AWS EC2, EBS, NAT, RDS, Auto Scaling, ELB and Elastic IPs, plus a custom snapshot protocol.
 - **GitHub:** Repository settings and active default-branch rulesets through read-only access.
-- **Review:** Approved versus observed values, versioned baselines, remediation review, scan history and CSV evidence.
+- **Review:** Field-level diffs, a findings queue with assignment, expiring exceptions, runbook links, post-review verification, and CSV evidence.
 - **Operations:** Workspace roles, SMTP alerts, retention, health checks and systemd install/upgrade.
 
 Review the [coverage and collector guide](docs/infrastructure.md) before onboarding. Infrastructure remediation is applied through the team's existing tools and then verified by DriftShield.
@@ -64,6 +64,7 @@ CI covers PostgreSQL regression tests, systemd installation and upgrade, ingesti
 | Document | Contents |
 | --- | --- |
 | [Product](docs/product.md) | Current scope, positioning, buyers and roadmap |
+| [Findings workflow](docs/drift-operations.md) | Triage, exceptions, remediation review and timeline exports |
 | [Infrastructure](docs/infrastructure.md) | Coverage, permissions, scheduling and remediation workflow |
 | [Commercial](docs/commercial.md) | Customer-hosted and managed deployment models |
 | [Architecture](docs/architecture.md) | Module boundaries, worker behavior, consistency and failure handling |

@@ -2,13 +2,13 @@
 {% block title %}Infrastructure · DriftShield{% endblock %}
 {% block content %}
 <div class="page-head"><div><p class="crumb">{{ workspace.name }}</p><h1>Infrastructure drift</h1><p>Monitor approved configurations across cloud accounts, clusters, and runtime environments.</p></div>
-<a class="button" href="{% url 'infra_evidence' workspace.slug %}">Export findings CSV</a></div>
+<div class="actions"><a class="button primary" href="{% url 'infra_inbox' workspace.slug %}">Open findings queue</a><a class="button" href="{% url 'infra_evidence' workspace.slug %}">Export findings CSV</a></div></div>
 <section class="panel">
   <div class="section-head"><h2>Targets</h2><span class="muted-text">{{ targets|length }} connected scopes</span></div>
   {% if targets %}
   <div class="table-wrap"><table><thead><tr><th>Target</th><th>Coverage</th><th>Status</th><th>Open findings</th><th>Last observation</th></tr></thead>
   <tbody>{% for target in targets %}<tr><td><a href="{% url 'infra_detail' workspace.slug target.pk %}">{{ target.name }}</a><small>{{ target.scope }}</small></td>
-  <td>{{ target.get_platform_display }}</td><td><span class="pill {{ target.tone }}">{{ target.label }}</span></td><td>{{ target.open_count }}</td>
+  <td>{{ target.get_platform_display }}</td><td><span class="pill {{ target.tone }}">{{ target.label }}</span></td><td>{{ target.open_count }}{% if target.suppressed_count %}<small>{{ target.suppressed_count }} excepted</small>{% endif %}</td>
   <td>{{ target.last_success|date:"M j, H:i T"|default:"Pending" }}</td></tr>{% endfor %}</tbody></table></div>
   {% else %}<p class="empty">Add an infrastructure target and send its first observation from a trusted collector.</p>{% endif %}
 </section>

@@ -16,8 +16,8 @@ from collector import adapters
 from collector.__main__ import main
 from collector.contract import MAX_BODY, decode, validate_values
 from governance.models import Audit, Membership, Notification, Workspace
-from .domain import check_overdue, issue_token
-from .models import Baseline, Delivery, Finding, Target
+from .domain import check_overdue, expire_exceptions, issue_token
+from .models import Baseline, Delivery, DriftException, EvidenceEvent, Finding, Target
 
 
 @override_settings(DS_INGEST_MIN_SECONDS=0)
@@ -111,6 +111,96 @@ class TargetTests(TestCase):
         self.assertContains(self.action("revoke"), "credential revoked")
         self.assertEqual(self.post(self.payload(seconds=3)).status_code, 401)
         self.assertEqual(Baseline.objects.count(), 1)
+
+    def test_review_needs_a_post_review_observation(self):
+        self.post(self.payload(seconds=-4))
+        self.action("approve")
+        self.post(self.payload({"ebs/vol-1": self.volume(100)}, seconds=-3))
+        finding = Finding.objects.get()
+        self.action("review", finding=finding.pk)
+        self.assertEqual(self.post(self.payload(seconds=-2)).json()["status"], "drift")
+        finding.refresh_from_db()
+        self.assertIsNone(finding.closed_at)
+        self.assertEqual(self.post(self.payload(seconds=2)).json()["status"], "match")
+        finding.refresh_from_db()
+        self.assertEqual(finding.resolution, "verified")
+        self.assertEqual(finding.review_revision, 2)
+        response = self.client.get(self.detail + "timeline.csv")
+        self.assertIn(b"reviewed", b"".join(response.streaming_content))
+
+    def test_exception_matches_only_exact_allowed_field_and_expires(self):
+        self.target.platform = "snapshot"
+        self.target.scope = "prod"
+        self.target.save()
+        self.post(self.payload({"service/api": {"replicas": 2, "privileged": False}}))
+        self.action("approve")
+        changed = {"service/api": {"replicas": 3, "privileged": False}}
+        self.post(self.payload(changed, seconds=1))
+        finding = Finding.objects.get()
+        response = self.action("except", finding=finding.pk, field="replicas", hours=1)
+        self.assertContains(response, "Excepted drift")
+        self.assertEqual(self.post(self.payload(changed, seconds=2)).json()["status"], "excepted")
+        self.assertContains(self.action("approve", finding=finding.pk), "excepted")
+        current = DriftException.objects.get()
+        count = Finding.objects.get().count
+        expire_exceptions(current.expires_at + timedelta(seconds=1))
+        finding.refresh_from_db()
+        self.assertFalse(finding.suppressed)
+        self.assertEqual(finding.count, count)
+        self.assertEqual(Notification.objects.count(), 2)
+        self.assertTrue(EvidenceEvent.objects.filter(kind="exception_expired").exists())
+
+    def test_exception_does_not_hide_unexpected_values_or_security_fields(self):
+        self.target.platform = "snapshot"
+        self.target.scope = "prod"
+        self.target.save()
+        self.post(self.payload({"service/api": {"replicas": 2, "privileged": False}}))
+        self.action("approve")
+        self.post(self.payload({"service/api": {"replicas": 3, "privileged": True}}, seconds=1))
+        finding = Finding.objects.get()
+        self.assertContains(self.action("except", finding=finding.pk, field="privileged", hours=1), "cannot be excepted")
+        self.action("except", finding=finding.pk, field="replicas", hours=1)
+        self.assertFalse(Finding.objects.get().suppressed)
+        self.assertContains(self.action("approve", finding=finding.pk), "End active exceptions")
+        self.assertEqual(self.post(self.payload({"service/api": {"replicas": 4, "privileged": False}}, seconds=2)).json()["status"], "drift")
+        self.assertEqual(self.post(self.payload({}, seconds=3)).json()["status"], "drift")
+        self.assertIsNone(Finding.objects.get(closed_at__isnull=True).actual)
+
+    def test_priority_email_filter_keeps_collection_failure_alerts(self):
+        self.workspace.infra_high_priority_only = True
+        self.workspace.save(update_fields=["infra_high_priority_only"])
+        self.target.platform = "snapshot"
+        self.target.scope = "prod"
+        self.target.save()
+        self.post(self.payload({"service/api": {"replicas": 2, "enabled": True}}))
+        self.action("approve")
+        self.post(self.payload({"service/api": {"replicas": 2, "enabled": False}}, seconds=1))
+        self.assertEqual(Finding.objects.get().priority, "medium")
+        self.assertFalse(Notification.objects.exists())
+        self.post(self.payload({"service/api": {"replicas": 3, "enabled": False}}, seconds=2))
+        self.assertEqual(Notification.objects.count(), 1)
+        failed = self.payload(seconds=3)
+        failed.pop("resources")
+        self.post({**failed, "error": "collection_failed"})
+        self.assertEqual(Notification.objects.count(), 2)
+
+    def test_assignment_filter_runbook_and_workspace_boundary(self):
+        self.post(self.payload())
+        self.action("approve")
+        self.post(self.payload({"ebs/vol-1": self.volume(100)}, seconds=1))
+        finding = Finding.objects.get()
+        self.assertContains(self.action("assign", finding=finding.pk, owner=self.viewer.pk), "active workspace")
+        self.assertContains(self.action("assign", finding=finding.pk, owner=self.owner.pk), "Set assignee")
+        finding.refresh_from_db()
+        self.assertEqual(finding.owner, self.owner)
+        self.assertContains(self.client.get("/w/alpha/infra/findings/?mine=1"), finding.resource)
+        export = self.client.get("/w/alpha/infra/evidence.csv?state=closed")
+        self.assertNotIn(finding.resource.encode(), b"".join(export.streaming_content))
+        self.assertContains(self.action("runbook", url="http://example.org/runbook"), "Use an HTTPS")
+        self.assertContains(self.action("runbook", url="https://example.org/runbook"), "Open team runbook")
+        self.assertEqual(self.client.get(f"/w/beta/infra/{self.target.pk}/timeline.csv").status_code, 404)
+        self.client.force_login(self.viewer)
+        self.assertEqual(self.action("assign", finding=finding.pk, owner=self.owner.pk).status_code, 403)
 
     def test_errors_preserve_state_and_out_of_order_is_rejected(self):
         self.post(self.payload())

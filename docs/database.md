@@ -26,3 +26,5 @@ v1 and v2 use incompatible data models. Migrating from v1 or v2 requires a fresh
 ## Infrastructure tables
 
 `Target` belongs to a workspace and stores platform/scope, hashed target token and expiry, observed source ID, latest observation, revision and baseline version. `Delivery` is unique per target and UUID and records a content hash for new observations. `Baseline` is versioned per target. `Finding` records expected/observed projections and has at most one open row per target/resource. Intake and review hold workspace and target row locks and update evidence and outbox atomically. Hourly maintenance prunes old deliveries and closed findings.
+
+Infrastructure findings now store assignment, exception status, opening baseline version and reviewed observation revision. DriftException records an exact field/value exception and expiry. EvidenceEvent records lifecycle events and follows workspace retention. Existing findings retain their original records.

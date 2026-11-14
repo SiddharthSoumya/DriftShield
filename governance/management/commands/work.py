@@ -11,6 +11,7 @@ from django.utils import timezone
 from governance.github import GitHub
 from governance.worker import check_overdue, deliver_one, heartbeat, prune, scan_one, weekly_digests
 from infrastructure.domain import check_overdue as check_infrastructure
+from infrastructure.domain import expire_exceptions
 
 logger = logging.getLogger(__name__)
 
@@ -37,7 +38,9 @@ class Command(BaseCommand):
                     heartbeat("github")
                     if time.monotonic() >= next_overdue:
                         check_overdue()
-                        check_infrastructure(timezone.now())
+                        now = timezone.now()
+                        check_infrastructure(now)
+                        expire_exceptions(now)
                         heartbeat("freshness")
                         next_overdue = time.monotonic() + 60
                     if time.monotonic() >= next_prune:

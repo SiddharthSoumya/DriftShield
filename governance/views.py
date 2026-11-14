@@ -349,10 +349,11 @@ def settings_view(request, member):
                 workspace.require_signatures = request.POST.get("signatures") == "1"
                 workspace.min_reviews = reviews
                 workspace.digest_weekly = request.POST.get("digest") == "1"
-                workspace.save(update_fields=["recipient", "retention_days", "require_private", "require_signatures", "min_reviews", "digest_weekly"])
+                workspace.infra_high_priority_only = request.POST.get("infra_high_only") == "1"
+                workspace.save(update_fields=["recipient", "retention_days", "require_private", "require_signatures", "min_reviews", "digest_weekly", "infra_high_priority_only"])
                 audit(workspace, request.user.username, "workspace_settings_updated", retention=days, email_enabled=bool(recipient), min_reviews=reviews,
                       require_private=workspace.require_private, require_signatures=workspace.require_signatures,
-                      digest_weekly=workspace.digest_weekly)
+                      digest_weekly=workspace.digest_weekly, infra_high_priority_only=workspace.infra_high_priority_only)
                 if request.POST.get("test") and recipient and settings.EMAIL_HOST:
                     recent_test = Audit.objects.filter(workspace=workspace, action="test_email_queued",
                                                        created_at__gte=timezone.now() - timedelta(minutes=10)).exists()

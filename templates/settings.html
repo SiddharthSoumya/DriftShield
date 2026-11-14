@@ -7,6 +7,7 @@
     <p>{% if smtp %}SMTP is configured. Use a team mailbox for delivery.{% else %}Ask your server administrator to configure SMTP before enabling email delivery.{% endif %}</p>
     <form method="post" class="stack">{% csrf_token %}
       <label for="recipient">Alert email</label><input id="recipient" name="recipient" type="email" value="{{ workspace.recipient }}" maxlength="254">
+      <label class="check"><input type="checkbox" name="infra_high_only" value="1" {% if workspace.infra_high_priority_only %}checked{% endif %}> Email only high-priority infrastructure drift findings</label>
       <label for="retention">Evidence retention in days</label><input id="retention" name="retention" type="number" min="7" max="365" value="{{ workspace.retention_days }}" required>
       <label class="check"><input type="checkbox" name="digest" value="1" {% if workspace.digest_weekly %}checked{% endif %}> Email weekly workspace summary</label>
       <h2>Repository policies</h2>
