@@ -1,4 +1,4 @@
-import csv
+from datetime import timedelta
 import hmac
 import json
 import re
@@ -18,7 +18,7 @@ from django.views.decorators.http import require_POST
 from collector.contract import IDENTIFIER, MAX_BODY, PLATFORMS, decode, envelope
 from governance.domain import audit
 from governance.models import Workspace
-from governance.views import csv_value, member_view
+from governance.views import csv_download, locked_member, member_view
 from .domain import Conflict, RateLimited, accept, approve, digest, fresh, issue_token, status
 from .models import Delivery, Finding, Target
 
@@ -31,6 +31,10 @@ GUIDANCE = {
     "terraform": "Review the plan in your existing Terraform or OpenTofu pipeline. Use your normal review process to reconcile the actual infrastructure or intentionally reconcile the source of truth, then generate a new refresh-only observation.",
     "snapshot": "Use the target's approved change procedure to restore the expected configuration, then collect a new snapshot.",
 }
+
+
+def token_valid(stored, expiry, candidate, now):
+    return bool(stored and expiry and now < expiry and hmac.compare_digest(candidate, stored))
 
 
 def token_response(request, member, target, token):
@@ -69,11 +73,12 @@ def add(request, member):
     token, token_hash = issue_token()
     try:
         with transaction.atomic():
-            workspace = Workspace.objects.select_for_update().get(pk=member.workspace.pk)
+            workspace = locked_member(member, "owner")
             if Target.objects.filter(workspace=workspace).count() >= 100:
                 raise Conflict("Workspace limit of 100 infrastructure targets reached.")
             target = Target.objects.create(workspace=workspace, name=name, platform=platform, scope=scope,
-                                           interval=interval, token_hash=token_hash)
+                                           interval=interval, token_hash=token_hash,
+                                           token_expires_at=timezone.now() + timedelta(days=90))
             audit(workspace, request.user.username, "infra_target_added", target=name, platform=platform)
     except (IntegrityError, Conflict):
         messages.error(request, "Target limit reached, or the name or platform scope is already in use.")
@@ -88,8 +93,8 @@ def ingest(request, pk):
     if not token:
         return JsonResponse({"error": "Invalid collector credential."}, status=401)
     candidate = digest(token[1])
-    initial = Target.objects.filter(pk=pk).values("workspace_id", "token_hash").first()
-    if not initial or not hmac.compare_digest(candidate, initial["token_hash"]):
+    initial = Target.objects.filter(pk=pk).values("workspace_id", "token_hash", "token_expires_at").first()
+    if not initial or not token_valid(initial["token_hash"], initial["token_expires_at"], candidate, timezone.now()):
         return JsonResponse({"error": "Invalid collector credential."}, status=401)
     if request.content_type != "application/json":
         return JsonResponse({"error": "Expected application/json."}, status=415)
@@ -110,7 +115,7 @@ def ingest(request, pk):
     with transaction.atomic():
         workspace = Workspace.objects.select_for_update().filter(pk=initial["workspace_id"]).first()
         target = Target.objects.select_for_update().filter(pk=pk, workspace=workspace).first() if workspace else None
-        if not target or not hmac.compare_digest(candidate, target.token_hash):
+        if not target or not token_valid(target.token_hash, target.token_expires_at, candidate, timezone.now()):
             return JsonResponse({"error": "Invalid collector credential."}, status=401)
         if data["platform"] != target.platform or data["scope"] != target.scope:
             return JsonResponse({"error": "Observation scope does not match target."}, status=422)
@@ -152,14 +157,27 @@ def action(request, member, pk):
     actor, command = request.user.username, request.POST.get("action")
     try:
         with transaction.atomic():
-            workspace = Workspace.objects.select_for_update().get(pk=member.workspace.pk)
+            required_roles = ("owner",) if command in ("rotate", "revoke", "remove") else ("owner", "operator")
+            workspace = locked_member(member, *required_roles)
             target = get_object_or_404(Target.objects.select_for_update(), workspace=workspace, pk=pk)
-            if command == "rotate" and member.role == "owner":
+            if command == "rotate":
                 token, target.token_hash = issue_token()
-                target.save(update_fields=["token_hash"])
+                target.token_expires_at = timezone.now() + timedelta(days=90)
+                # Require evidence collected with the new credential before permitting review.
+                target.last_error = "credential_rotated"
+                target.overdue_alerted = False
+                target.save(update_fields=["token_hash", "token_expires_at", "last_error", "overdue_alerted"])
                 audit(workspace, actor, "infra_token_rotated", target=target.name)
                 return token_response(request, member, target, token)
-            if command == "remove" and member.role == "owner":
+            if command == "revoke":
+                target.token_hash = ""
+                target.token_expires_at = None
+                target.overdue_alerted = True
+                target.save(update_fields=["token_hash", "token_expires_at", "overdue_alerted"])
+                audit(workspace, actor, "infra_token_revoked", target=target.name)
+                messages.success(request, "Collector credential revoked. Rotate to reconnect.")
+                return redirect("infra_detail", slug=workspace.slug, pk=pk)
+            if command == "remove":
                 if request.POST.get("confirm") != target.name:
                     raise Conflict("Enter the exact target name to remove it.")
                 audit(workspace, actor, "infra_target_removed", target=target.name)
@@ -173,7 +191,10 @@ def action(request, member, pk):
                 approve(target, int(request.POST.get("revision", "")), int(request.POST.get("version", "")),
                         [int(pk) for pk in request.POST.getlist("finding")], actor, request.POST.get("reason", ""))
             elif command == "review":
-                finding = get_object_or_404(Finding, target=target, closed_at__isnull=True, pk=int(request.POST.get("finding", "")))
+                finding_id = int(request.POST.get("finding", ""))
+                if not 0 < finding_id < 2**63:
+                    raise ValueError
+                finding = get_object_or_404(Finding, target=target, closed_at__isnull=True, pk=finding_id)
                 reason = request.POST.get("reason", "").strip()
                 if not fresh(target, timezone.now()) or not reason or len(reason) > 240:
                     raise Conflict("A fresh observation and a change ticket or review note are required.")
@@ -191,17 +212,13 @@ def action(request, member, pk):
 
 @member_view()
 def evidence(request, member):
-    response = HttpResponse(content_type="text/csv")
-    response["Content-Disposition"] = 'attachment; filename="driftshield-infrastructure.csv"'
-    response["X-DriftShield-Export-Limit"] = "10000"
-    writer = csv.writer(response)
-    writer.writerow(["Target", "Platform", "Scope", "Resource", "Priority", "Expected", "Observed", "First seen",
-                     "Last seen", "Observations", "Reviewer", "Change reference", "Closed", "Resolution"])
-    rows = Finding.objects.filter(target__workspace=member.workspace).select_related("target").order_by("-first_seen", "-pk")
-    for row in rows[:10000].iterator():
-        writer.writerow([csv_value(value) for value in (
-            row.target.name, row.target.platform, row.target.scope, row.resource, row.priority,
-            json.dumps(row.expected), json.dumps(row.actual), row.first_seen.isoformat(), row.last_seen.isoformat(),
-            row.count, row.reviewer, row.reason, row.closed_at.isoformat() if row.closed_at else "", row.resolution,
-        )])
-    return response
+    queryset = Finding.objects.filter(target__workspace=member.workspace).select_related("target").order_by("-first_seen", "-pk")
+    rows = (
+        (row.target.name, row.target.platform, row.target.scope, row.resource, row.priority,
+         json.dumps(row.expected), json.dumps(row.actual), row.first_seen.isoformat(), row.last_seen.isoformat(),
+         row.count, row.reviewer, row.reason, row.closed_at.isoformat() if row.closed_at else "", row.resolution)
+        for row in queryset[:10000].iterator(chunk_size=100)
+    )
+    return csv_download("driftshield-infrastructure.csv",
+                        ["Target", "Platform", "Scope", "Resource", "Priority", "Expected", "Observed", "First seen",
+                         "Last seen", "Observations", "Reviewer", "Change reference", "Closed", "Resolution"], rows)

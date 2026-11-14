@@ -56,6 +56,9 @@ def deliver_one():
     item = claim(pending.order_by("next_attempt", "id"))
     if not item:
         return False
+    if not Notification.objects.filter(pk=item.pk, lease=item.lease, workspace__recipient=item.recipient).exists():
+        Notification.objects.filter(pk=item.pk, lease=item.lease).delete()
+        return True
     now = timezone.now()
     changes = {"attempts": item.attempts + 1, "lease": None, "lease_until": None}
     try:
@@ -128,7 +131,7 @@ def prune():
     now = timezone.now()
     for workspace in Workspace.objects.iterator():
         cutoff = now - timedelta(days=workspace.retention_days)
-        maintain_infrastructure(workspace, cutoff, now)
+        maintain_infrastructure(workspace, cutoff)
         Scan.objects.filter(monitor__workspace=workspace, collected_at__lt=cutoff).delete()
         Audit.objects.filter(workspace=workspace, created_at__lt=cutoff).delete()
         Incident.objects.filter(monitor__workspace=workspace, closed_at__lt=cutoff).delete()
@@ -137,5 +140,5 @@ def prune():
     Session.objects.filter(expire_date__lt=now).delete()
 
 
-def heartbeat():
-    WorkerHealth.objects.update_or_create(name="worker", defaults={"updated_at": timezone.now()})
+def heartbeat(name="worker"):
+    WorkerHealth.objects.update_or_create(name=name, defaults={"updated_at": timezone.now()})

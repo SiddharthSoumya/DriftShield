@@ -42,3 +42,9 @@ On a staging host, verify TLS and both systemd services. Provision two workspace
 ## Infrastructure staging
 
 After the web and worker services are active, follow the [collector guide](infrastructure.md) for each supported environment. The server installer includes the ingestion code. Install the relevant provider CLI on the separate collector runner. Configure the HTTPS proxy to accept observations up to 1 MB. Verify baseline approval, a supported change, a failed collection, a restoration and evidence export against a sandbox scope before a customer rollout.
+
+## Audit release changes
+
+Use `/livez` for web-process liveness and `/healthz` for database readiness. The owner-only worker route now reports the latest completed tick for email, GitHub collection, freshness checks, and retention. A completed tick indicates the stage ran. Confirm actual delivery and collection success using the corresponding records and external probes.
+
+Remote production PostgreSQL requires `DS_DB_SSLMODE=verify-full`. Set `DS_DB_SSLROOTCERT` to the server's CA certificate file readable by the service account if required. Use a verified STARTTLS or implicit TLS SMTP relay. A loopback SMTP relay without credentials may use plaintext locally. See the [incident runbook](incident-response.md) for outage and recovery procedures.

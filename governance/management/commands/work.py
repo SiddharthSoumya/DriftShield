@@ -6,9 +6,11 @@ import time
 import httpx
 from django.core.management.base import BaseCommand
 from django.db import close_old_connections
+from django.utils import timezone
 
 from governance.github import GitHub
 from governance.worker import check_overdue, deliver_one, heartbeat, prune, scan_one, weekly_digests
+from infrastructure.domain import check_overdue as check_infrastructure
 
 logger = logging.getLogger(__name__)
 
@@ -29,16 +31,21 @@ class Command(BaseCommand):
             while not stop.is_set():
                 try:
                     close_old_connections()
-                    heartbeat()
                     delivered = deliver_one()
+                    heartbeat("email")
                     scanned = scan_one(github)
+                    heartbeat("github")
                     if time.monotonic() >= next_overdue:
                         check_overdue()
+                        check_infrastructure(timezone.now())
+                        heartbeat("freshness")
                         next_overdue = time.monotonic() + 60
                     if time.monotonic() >= next_prune:
                         prune()
                         weekly_digests()
+                        heartbeat("retention")
                         next_prune = time.monotonic() + 3600
+                    heartbeat()
                 except Exception:
                     if options["once"]:
                         raise

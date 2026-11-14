@@ -80,7 +80,11 @@ def collect(args):
         prefix = ["docker", "--context", args.context]
         inventory = provider_output(prefix + ["container", "ls", "-a", "--format", "{{.Names}}"])
         names = set(inventory.decode().splitlines()).intersection(args.container)
-        return adapters.docker(cli(prefix + ["inspect", "--type", "container", "--", *sorted(names)])) if names else {}
+        identity = provider_output(prefix + ["info", "--format", "{{.ID}}"]).decode().strip()
+        if not identity:
+            raise ValueError("Docker daemon identity unavailable.")
+        resources = adapters.docker(cli(prefix + ["inspect", "--type", "container", "--", *sorted(names)])) if names else {}
+        return resources, "docker:" + adapters.fingerprint([identity, sorted(set(args.container))])
     if args.platform == "kubernetes":
         if not args.context or not args.namespace or args.context.startswith("-") or not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,62}", args.namespace):
             raise ValueError("Specify a context and namespace.")
@@ -89,7 +93,12 @@ def collect(args):
                         "get", groups, "-o", "json"])
         if document.get("kind") != "List" or document.get("metadata", {}).get("continue"):
             raise ValueError("Kubernetes inventory is incomplete.")
-        return adapters.kubernetes([document], args.namespace)
+        cluster = cli(["kubectl", "--context", args.context, "--namespace", args.namespace,
+                       "config", "view", "--minify", "-o", "json"])
+        servers = [entry["cluster"]["server"] for entry in cluster["clusters"]]
+        if len(servers) != 1 or not servers[0]:
+            raise ValueError("Kubernetes API endpoint identity unavailable.")
+        return adapters.kubernetes([document], args.namespace), "kubernetes:" + adapters.fingerprint([servers[0], args.namespace])
     if not args.region or not re.fullmatch(r"[a-z]{2}(?:-[a-z0-9]+)+-\d+", args.region):
         raise ValueError("Specify an AWS region.")
     prefix = ["aws", "--no-cli-pager", "--output", "json", "--region", args.region]
@@ -97,7 +106,7 @@ def collect(args):
     expected_scope = f"{identity['Account']}:{args.region}"
     if args.scope != expected_scope:
         raise ValueError("AWS account and region do not match the target scope.")
-    return adapters.aws({kind: cli(prefix + list(call)) for kind, call in adapters.AWS_CALLS.items()})
+    return adapters.aws({kind: cli(prefix + list(call)) for kind, call in adapters.AWS_CALLS.items()}), "aws:" + expected_scope
 
 
 def send(url, token, body):
@@ -143,7 +152,11 @@ def main():
         if args.collection_failed:
             payload["error"] = "collection_failed"
         else:
-            payload["resources"] = collect(args)
+            observation = collect(args)
+            if isinstance(observation, tuple):
+                payload["resources"], payload["source_id"] = observation
+            else:
+                payload["resources"] = observation
     except subprocess.TimeoutExpired:
         payload["error"] = "collector_timeout"
     except (subprocess.CalledProcessError, OSError):
@@ -158,6 +171,7 @@ def main():
                     raise ValueError("Observation is too large.")
             except (ValueError, TypeError, OverflowError):
                 del payload["resources"]
+                payload.pop("source_id", None)
                 payload["error"] = "invalid_snapshot"
         envelope(payload, datetime.now(timezone.utc))
         body = json.dumps(payload, separators=(",", ":")).encode()

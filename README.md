@@ -68,6 +68,8 @@ The CI workflow runs tests against PostgreSQL. Deployment validation includes a 
 | [Frontend](docs/frontend.md) | Page map, states, accessibility and workflow design |
 | [GitHub](docs/github.md) | App setup, permissions, coverage and collection limits |
 | [Operations](docs/operations.md) | Install, upgrade, health checks, troubleshooting and recovery |
+| [Pre-release audit](docs/pre-release-audit.md) | Security, functional, operations, chaos, and compliance assessment |
+| [Incident response](docs/incident-response.md) | Containment, service recovery, and verification |
 | [Release readiness](docs/release-readiness.md) | Customer-hosted acceptance gates and remaining risks |
 | [Security](docs/security.md) | Trust model, security controls, and operator responsibilities |
 

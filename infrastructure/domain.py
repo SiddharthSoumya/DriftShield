@@ -31,6 +31,8 @@ def issue_token():
 
 
 def status(target, now):
+    if not target.token_expires_at or target.token_expires_at <= now:
+        return "Collector credential inactive", "danger"
     if target.last_error:
         return "Collection failed", "danger"
     last = target.last_success or target.created_at
@@ -109,6 +111,8 @@ def accept(target, delivery, captured, payload, now):
         if previous.captured_at != captured or (previous.payload_hash and previous.payload_hash != fingerprint(payload)):
             raise Conflict("Delivery ID has already been used.")
         return previous.status
+    if "resources" in payload and target.source_id and payload.get("source_id") != target.source_id:
+        raise Conflict("Observation source changed or is missing. Check runner scope or create a new target.")
     if target.last_attempt and now - target.last_attempt < timedelta(seconds=settings.DS_INGEST_MIN_SECONDS):
         raise RateLimited
     last = Delivery.objects.filter(target=target).order_by("-captured_at").values_list("captured_at", flat=True).first()
@@ -126,6 +130,8 @@ def accept(target, delivery, captured, payload, now):
         target.last_error = ""
         target.revision += 1
         target.latest = payload["resources"]
+        if payload.get("source_id") and not target.source_id:
+            target.source_id = payload["source_id"]
         result = "unbaselined"
         if target.platform == "terraform":
             changed = compare(target, {}, now)
@@ -140,7 +146,8 @@ def accept(target, delivery, captured, payload, now):
 
 
 def fresh(target, now):
-    return target.last_success and not target.last_error and now - target.last_success <= timedelta(minutes=2 * target.interval + 5)
+    return (target.token_expires_at and now < target.token_expires_at and target.last_success
+            and not target.last_error and now - target.last_success <= timedelta(minutes=2 * target.interval + 5))
 
 
 def approve(target, revision, version, selected, actor, reason):
@@ -174,17 +181,27 @@ def approve(target, revision, version, selected, actor, reason):
     audit(target.workspace, actor, "infra_baseline_approved", target=target.name, version=target.version, reason=reason.strip())
 
 
-def maintenance(workspace, cutoff, now):
+def maintenance(workspace, cutoff):
     Delivery.objects.filter(target__workspace=workspace, received_at__lt=cutoff).delete()
     Finding.objects.filter(target__workspace=workspace, closed_at__lt=cutoff).delete()
-    due = Target.objects.filter(workspace=workspace, overdue_alerted=False, last_error="")
-    for pk in due.values_list("pk", flat=True):
+
+
+def check_overdue(now):
+    for pk, workspace_id in Target.objects.filter(overdue_alerted=False).values_list("pk", "workspace_id").iterator():
         with transaction.atomic():
-            locked_workspace = Workspace.objects.select_for_update().filter(pk=workspace.pk).first()
-            if not locked_workspace:
-                return
-            target = Target.objects.select_for_update().filter(pk=pk, overdue_alerted=False, last_error="").first()
-            if target and status(target, now)[0] == "Overdue":
-                target.overdue_alerted = True
-                target.save(update_fields=["overdue_alerted"])
+            workspace = Workspace.objects.select_for_update().filter(pk=workspace_id).first()
+            if not workspace:
+                continue
+            target = Target.objects.select_for_update().filter(pk=pk, workspace=workspace, overdue_alerted=False).first()
+            if not target:
+                continue
+            inactive = not target.token_expires_at or target.token_expires_at <= now
+            last = target.last_success or target.created_at
+            if not inactive and (target.last_error or now - last <= timedelta(minutes=2 * target.interval + 5)):
+                continue
+            target.overdue_alerted = True
+            target.save(update_fields=["overdue_alerted"])
+            if inactive:
+                alert(target, "Infrastructure credential inactive", "Rotate or reconnect the collector credential if monitoring is still required.")
+            else:
                 alert(target, "Infrastructure observation overdue", "Check the collector schedule and upstream access.")

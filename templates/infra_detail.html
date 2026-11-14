@@ -49,7 +49,12 @@
 <section class="panel pad"><h2>Baseline history</h2><ul class="activity">{% for version in versions %}<li>Version {{ version.version }} · {{ version.actor }} · {{ version.reason }}</li>{% empty %}<li>No approved baselines.</li>{% endfor %}</ul></section>
 {% if member.role == "owner" %}
 <section class="panel pad"><h2>Collector</h2><pre>{{ endpoint }}</pre>
-<form method="post" action="{% url 'infra_action' workspace.slug target.pk %}">{% csrf_token %}<button name="action" value="rotate">Rotate collector token</button></form>
+{% if target.source_id %}<p>Observed source ID <code>{{ target.source_id }}</code></p>{% else %}<p>No source identity has been recorded.</p>{% endif %}
+{% if target.token_expires_at %}<p>Credential expires {{ target.token_expires_at|date:"M j, Y H:i T" }}.</p>{% else %}<p>Collector credential revoked.</p>{% endif %}
+<form method="post" action="{% url 'infra_action' workspace.slug target.pk %}" class="inline">{% csrf_token %}
+<button name="action" value="rotate">Rotate collector token</button>
+{% if target.token_expires_at %}<button name="action" value="revoke">Revoke token</button>{% endif %}
+</form>
 <details><summary>Remove target</summary><p>This deletes its baselines, deliveries and findings.</p>
 <form method="post" class="inline" action="{% url 'infra_action' workspace.slug target.pk %}">{% csrf_token %}
 <div><label for="confirm">Type {{ target.name }} to confirm</label><input name="confirm" id="confirm" required></div><button name="action" value="remove">Remove target</button></form></details>

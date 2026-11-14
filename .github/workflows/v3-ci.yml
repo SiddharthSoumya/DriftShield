@@ -10,6 +10,7 @@ permissions:
 jobs:
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     services:
       postgres:
         image: postgres:16
@@ -30,8 +31,10 @@ jobs:
       DS_DB_USER: driftshield
       DS_DB_PASSWORD: ci-only-password
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: '3.12'
           cache: pip
@@ -82,7 +85,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          token="$(sudo driftshieldctl shell -c 'from governance.models import Workspace; from infrastructure.domain import issue_token; from infrastructure.models import Target; w=Workspace.objects.create(slug="ci-infra",name="Infrastructure CI"); token,hashed=issue_token(); Target.objects.create(workspace=w,name="billing",platform="snapshot",scope="billing",token_hash=hashed); print(token)' | tail -1)"
+          token="$(sudo driftshieldctl shell -c 'from datetime import timedelta; from django.utils import timezone; from governance.models import Workspace; from infrastructure.domain import issue_token; from infrastructure.models import Target; w=Workspace.objects.create(slug="ci-infra",name="Infrastructure CI"); token,hashed=issue_token(); Target.objects.create(workspace=w,name="billing",platform="snapshot",scope="billing",token_hash=hashed,token_expires_at=timezone.now()+timedelta(days=1)); print(token)' | tail -1)"
           target="$(sudo driftshieldctl shell -c 'from infrastructure.models import Target; print(Target.objects.get(name="billing").pk)' | tail -1)"
           snapshot="$(mktemp)"
           report="$(mktemp)"
@@ -96,22 +99,42 @@ jobs:
               python -c 'import json, sys; assert json.load(sys.stdin)["status"] == "unbaselined"'
           done
           sudo driftshieldctl shell -c 'from infrastructure.models import Target, Delivery; assert Target.objects.get(name="billing").revision == 1; assert Delivery.objects.count() == 1'
+      - name: Verify database outage and backup recovery
+        shell: bash
+        env:
+          PG_CONTAINER: ${{ job.services.postgres.id }}
+        run: |
+          set -euo pipefail
+          backup="$(mktemp)"
+          trap 'rm -f "$backup"' EXIT
+          docker exec "$PG_CONTAINER" pg_dump -U driftshield -Fc driftshield > "$backup"
+          docker exec "$PG_CONTAINER" createdb -U driftshield driftshield_restore
+          docker exec -i "$PG_CONTAINER" pg_restore -U driftshield --exit-on-error -d driftshield_restore < "$backup"
+          DS_DB_NAME=driftshield_restore python manage.py shell -c 'from infrastructure.models import Delivery, Target; assert Target.objects.get(name="billing").revision == 1; assert Delivery.objects.count() == 1'
+          docker stop "$PG_CONTAINER"
+          curl -fsS --max-time 10 http://127.0.0.1:8000/livez
+          test "$(curl -sS --max-time 15 -o /dev/null -w '%{http_code}' http://127.0.0.1:8000/healthz)" = 503
+          docker start "$PG_CONTAINER"
+          curl --retry 15 --retry-all-errors --retry-delay 1 --max-time 10 -fsS http://127.0.0.1:8000/healthz
   collector-smoke:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     strategy:
       matrix:
         engine: [terraform, tofu]
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: '3.12'
-      - uses: hashicorp/setup-terraform@v3
+      - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3
         if: matrix.engine == 'terraform'
         with:
           terraform_version: '1.11.4'
           terraform_wrapper: false
-      - uses: opentofu/setup-opentofu@v1
+      - uses: opentofu/setup-opentofu@9d84900f3238fab8cd84ce47d658d25dd008be2f # v1
         if: matrix.engine == 'tofu'
         with:
           tofu_version: '1.9.1'
@@ -146,9 +169,12 @@ jobs:
           inspect | python -c 'import json, sys; assert json.load(sys.stdin)["resources"]["container/driftshield-ci"]["memory_bytes"] == 268435456'
   kubernetes-smoke:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: '3.12'
       - uses: helm/kind-action@a1b0e391336a6ee6713a0583f8c6240d70863de3 # v1.12.0
