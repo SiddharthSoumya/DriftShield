@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% block title %}{{ workspace.name }} · DriftShield{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div><p class="crumb">{{ workspace.name }}</p><h1>Repository overview</h1><p>Review configuration drift and scan coverage across your repositories.</p></div>
+  <a class="button" href="{% url 'evidence' workspace.slug %}">Export evidence CSV</a>
+</div>
+<section class="metrics" aria-label="Workspace metrics">
+  <div class="metric"><span>Monitored repositories</span><strong>{{ monitors|length }}</strong></div>
+  <div class="metric"><span>Matching baseline</span><strong>{{ fresh_count }}</strong></div>
+  <div class="metric"><span>Need attention</span><strong>{{ attention_count }}</strong></div>
+  <div class="metric"><span>Open incidents</span><strong>{{ incident_count }}</strong></div>
+</section>
+<section class="panel">
+  <div class="section-head"><h2>Repositories</h2><span class="muted-text">{{ monitors|length }} of {{ workspace.repo_limit }} slots used</span></div>
+  {% if monitors %}
+  <div class="table-wrap"><table>
+    <thead><tr><th scope="col">Repository</th><th scope="col">Status</th><th scope="col">Open incidents</th><th scope="col">Last successful scan</th></tr></thead>
+    <tbody>{% for monitor in monitors %}
+    <tr><td><a href="{% url 'monitor' workspace.slug monitor.pk %}">{{ monitor.full_name }}</a><small>{% if monitor.app_managed %}GitHub App{% else %}Public API{% endif %}</small></td>
+    <td><span class="pill {{ monitor.tone }}">{{ monitor.state }}</span></td><td>{{ monitor.open_count }}</td><td>{{ monitor.last_success|date:"M j, H:i T"|default:"Pending" }}</td></tr>
+    {% endfor %}</tbody>
+  </table></div>
+  {% else %}
+  <p class="empty">Add a public repository or ask your server administrator to connect a GitHub App for private repositories.</p>
+  {% endif %}
+  {% if member.role != "viewer" %}
+  <div class="toolbar">
+    <form method="post" action="{% url 'add_public' workspace.slug %}" class="inline">{% csrf_token %}
+      <div><label for="repository">Public repository</label><input id="repository" name="repository" required placeholder="owner/repository" maxlength="140"></div>
+      <button class="primary">Add repository</button>
+    </form>
+    {% if integrated and member.role == "owner" %}
+    <form method="post" action="{% url 'import_repos' workspace.slug %}">{% csrf_token %}<button>Import GitHub App repositories</button></form>
+    {% endif %}
+  </div>
+  {% endif %}
+</section>
+<section class="panel">
+  <div class="section-head"><h2>Recent activity</h2></div>
+  <ul class="activity">{% for entry in recent %}
+    <li><strong>{{ entry.label }}</strong>{% if entry.monitor %} · {{ entry.monitor.full_name }}{% endif %}
+    <small>{{ entry.actor }} · {{ entry.created_at|date:"M j, H:i T" }}</small></li>
+  {% empty %}<li>No workspace activity yet.</li>{% endfor %}</ul>
+</section>
+{% endblock %}

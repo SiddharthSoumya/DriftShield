@@ -1,0 +1,33 @@
+{% load static %}<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}DriftShield{% endblock %}</title>
+  <link rel="stylesheet" href="{% static 'app.css' %}">
+</head>
+<body>
+<a href="#content" class="skip">Skip to content</a>
+<header class="header">
+  <div class="header-inner">
+    <a class="brand" href="{% url 'index' %}"><span class="mark" aria-hidden="true">◆</span> DriftShield</a>
+    {% if workspace %}
+      <nav aria-label="Workspace">
+        <a href="{% url 'overview' workspace.slug %}">Overview</a>
+        <a href="{% url 'audit' workspace.slug %}">Activity</a>
+        {% if member.role == 'owner' %}<a href="{% url 'settings' workspace.slug %}">Settings</a>{% endif %}
+      </nav>
+    {% endif %}
+    {% if user.is_authenticated %}
+      <form method="post" action="{% url 'logout' %}" class="session">{% csrf_token %}
+        <span>{{ user.username }}</span><button class="ghost">Sign out</button>
+      </form>
+    {% endif %}
+  </div>
+</header>
+<main id="content" class="container">
+  {% for message in messages %}<p class="notice {{ message.tags }}" role="status">{{ message }}</p>{% endfor %}
+  {% block content %}{% endblock %}
+</main>
+</body>
+</html>

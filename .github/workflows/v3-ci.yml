@@ -1,0 +1,50 @@
+name: DriftShield v3
+on:
+  pull_request:
+  push:
+    branches: [main, driftshield-v3]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: driftshield
+          POSTGRES_USER: driftshield
+          POSTGRES_PASSWORD: ci-only-password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U driftshield"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DS_DEV: '1'
+      DS_DB_NAME: driftshield
+      DS_DB_USER: driftshield
+      DS_DB_PASSWORD: ci-only-password
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - run: python -m pip install -r requirements.txt
+      - run: python manage.py makemigrations --check --dry-run
+      - run: python manage.py test -v 2
+      - run: python -m compileall -q driftshield governance
+      - run: for script in deploy/install.sh deploy/driftshieldctl deploy/service-launch; do bash -n "$script"; done
+      - name: Check production settings
+        env:
+          DS_DEV: '0'
+          DS_ORIGIN: https://driftshield.example.test
+          DS_SECRET_KEY: ci-only-8c7a5ebbf750b061d62962048e4ea06c126f75468c40f03f3fd0d4dc
+        run: |
+          python manage.py check --deploy --fail-level WARNING
+          python manage.py collectstatic --no-input

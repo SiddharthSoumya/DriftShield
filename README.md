@@ -1,288 +1,76 @@
-# DriftShield 🛡️
-### DriftShield helps detect abnormal system behavior and potential security threats before they escalate into critical failures.
+# DriftShield v3
 
-DriftShield is an autonomous anomaly detection and security monitoring platform designed to identify suspicious behavioral drift in applications and systems. It continuously analyzes incoming activity patterns, detects abnormal behavior using intelligent backend processing, and provides real-time visibility through a modern monitoring dashboard.
-It autonomuosly remediates the system and revert back to trusted baseline configuration within a specific time-interval.
+**GitHub configuration monitoring for teams that need to know what changed and show how it was handled.**
 
-Built with a scalable containerized architecture, DriftShield combines a Spring Boot backend, PostgreSQL database, Dockerized deployment, and a lightweight frontend dashboard to create a secure and developer-friendly monitoring system.
+DriftShield is a self-hosted, multi-workspace application. It watches repository visibility, the default branch, archival status, and active rulesets on the default branch. It records differences against an approved baseline, checks workspace policy, and sends email when a new finding opens or collection becomes unavailable. It reads GitHub settings and leaves changes to repository administrators.
 
----
+## What v3 includes
 
-# 🚀 Features
+- A responsive dashboard with repository health, findings, scan history, baseline versions, and workspace activity.
+- Public GitHub scanning and private repository monitoring with a read-only GitHub App.
+- Selective baseline approval with a reason and protection against approving stale observations.
+- Workspace checks for public exposure, minimum pull-request approvals, and signed commits.
+- Owner, operator, and viewer roles with server-managed provisioning and revocation.
+- PostgreSQL-backed scheduling, expiring job leases, retry backoff, SMTP outbox, optional weekly summaries, and evidence retention.
+- CSV export and systemd installation with separate web and worker services.
 
-* Real-time anomaly and drift detection
-* AI-assisted behavioral monitoring
-* RESTful backend APIs
-* PostgreSQL-powered persistent storage
-* Dockerized full-stack deployment
-* Lightweight frontend dashboard
-* Scalable backend architecture
-* Clean separation of frontend and backend services
+This release targets GitHub.com. Active ruleset coverage depends on GitHub plan and repository access. Classic branch protection, bypass actor auditing, GitHub Enterprise Server, self-service billing, and SSO are outside this release. See the [current release scope](docs/product.md).
 
----
+## Try it locally
 
-# 🏗️ Tech Stack
-
-## Backend
-
-* Java 21
-* Spring Boot
-* Spring Data JPA
-* Hibernate
-* PostgreSQL
-* Maven
-
-## Frontend
-
-* React
-* Vite
-* JavaScript
-
-## DevOps & Infrastructure
-
-* Docker
-* Docker Compose
-
----
-
-# ⚡ System Architecture
-
-```text id="ew6vyj"
-                ┌──────────────────┐
-                │    Frontend UI   │
-                │  React + Vite    │
-                └────────┬─────────┘
-                         │ REST API
-                         ▼
-                ┌──────────────────┐
-                │  Spring Boot API │
-                │ Drift Detection  │
-                │ Business Logic   │
-                └────────┬─────────┘
-                         │ JPA/Hibernate
-                         ▼
-                ┌──────────────────┐
-                │   PostgreSQL DB  │
-                │ Persistent Store │
-                └──────────────────┘
-```
-
----
-
-# 📂 Project Structure
-
-```bash id="n57yhz"
-DriftShield/
-│
-├── backend/
-│   ├── src/
-│   ├── Dockerfile
-│   ├── docker-compose.yml
-│   └── pom.xml
-│
-├── frontend/
-│   ├── src/
-│   ├── Dockerfile
-│   └── package.json
-│
-└── README.md
-```
-
----
-
-# ⚙️ Prerequisites
-
-Before running the project, ensure the following are installed:
-
-* Docker
-* Docker Compose
-
----
-
-# ▶️ Running the Backend
-
-Navigate to the backend directory and start the backend services:
-
-```bash id="f59jx8"
-docker-compose up --build
-```
-
-This will:
-
-* Build the backend container
-* Start Spring Boot services
-* Start PostgreSQL database
-* Configure networking automatically
-
-Backend server will run on:
-
-```bash id="6e7r4g"
-http://localhost:8080
-```
-
----
-
-# ▶️ Running the Frontend
-
-Run the frontend container using:
-
-```bash id="4cbp77"
-docker run -p 5173:5173 driftshield-frontend
-```
-
-Frontend dashboard will be available at:
-
-```bash id="94c8hk"
-http://localhost:5173
-```
-
----
-
-# 📸 Screenshots / Demo
-
-# 📸 Dashboard Preview
-
-![Dashboard Screenshot](https://raw.githubusercontent.com/SiddharthSoumya/DriftShield/main/DriftShield_Dashboard.png)
-
----
-
-# 🎥 Demo Video
-
-[![Watch the Demo](https://img.youtube.com/vi/d1kuxFRCc8o/maxresdefault.jpg)](https://youtu.be/d1kuxFRCc8o)
-
----
-# 🖼️ Project Poster
-
-[![DriftShield Poster](https://raw.githubusercontent.com/SiddharthSoumya/DriftShield/main/poster-preview.png)](https://canva.link/ln4opcenpf5iu1m)
-
----
-
-# 🧠 How DriftShield Works
-
-1. Incoming system or application activity is received by the backend APIs.
-2. Spring Boot services process and analyze the activity patterns.
-3. Drift detection logic identifies suspicious or abnormal behavior.
-4. Processed data is stored in PostgreSQL.
-5. Frontend dashboard displays monitoring insights and detection results in real time.
-
----
-
-# 🛠️ Development Notes
-
-* Docker daemon must be running before starting containers.
-* First build may take several minutes depending on internet speed and image caching.
-* Environment variables can be configured for production deployment.
-* PostgreSQL data persistence depends on Docker volume configuration.
-
----
-
-# 🔥 Future Improvements
-
-* Advanced AI/ML drift prediction
-* Real-time alert notifications
-* Authentication & RBAC
-* Kubernetes deployment
-* Cloud-native monitoring support
-* Historical analytics dashboard
-
----
-
-# 👨‍💻 Contributors
-
-* Siddharth Soumya
-  
----
-
-# � Render Deployment Guide (Free Tier)
-
-This project is ready for a free Render deployment with a managed Postgres database and secure environment variables.
-
-## 1) Create a free Postgres database
-
-1. Sign in to Render.
-2. Click New + -> Postgres.
-3. Pick a name like `driftshield-db`.
-4. Choose the Free plan.
-5. Select a region close to your users.
-6. Create the database.
-
-Render will provide your database connection details. Keep the generated connection string private.
-
-## 2) Set secure environment variables
-
-Use the Render dashboard for each web service instead of hardcoding secrets in source control.
-
-Backend service env vars:
-
-- `PORT=8080`
-- `DB_URL=<your-render-postgres-connection-string>`
-- `CORS_ALLOWED_ORIGINS=https://*.onrender.com,https://*.netlify.app,https://*.vercel.app,https://*.github.dev`
-
-Frontend service env vars:
-
-- `VITE_API_BASE_URL=https://<your-backend-service>.onrender.com`
-
-Important:
-- Never commit `.env` files with real secrets.
-- Use Render env vars or a local `.env` file only for development.
-- Keep the database password and connection string private.
-
-## 3) One-click deploy with Render Blueprint
-
-This repo includes a Render blueprint at [render.yaml](render.yaml).
-
-You can deploy immediately by clicking:
-
-https://render.com/deploy?repo=https://github.com/<your-github-username>/DriftShield
-
-If you prefer the dashboard flow:
-
-1. Push this repository to GitHub.
-2. In Render, click New + -> Blueprint.
-3. Connect the repository.
-4. Render will create the backend, frontend, and free Postgres database automatically.
-
-## 4) Local development
-
-Backend:
+With Python 3.12 or newer:
 
 ```bash
-cd backend/backend
-./mvnw spring-boot:run
+git clone --branch driftshield-v3 https://github.com/SiddharthSoumya/DriftShield.git
+cd DriftShield
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install -r requirements.txt
+export DS_DEV=1
+python manage.py migrate
+python manage.py provision demo owner --name "Demo workspace"
+python manage.py runserver 127.0.0.1:8000
 ```
 
-Frontend:
+In a second terminal, run `DS_DEV=1 .venv/bin/python manage.py work`. Open [the local dashboard](http://127.0.0.1:8000), sign in, and add a public repository you control. Once the worker has collected it, refresh the repository page and approve the first baseline. Local mode uses SQLite.
+
+## Install on a Linux server
+
+You need systemd, Python 3.12+ with venv, PostgreSQL 16+, and an HTTPS origin served by a reverse proxy such as Caddy. Run the installer from a reviewed checkout:
 
 ```bash
-cd frontend
-npm install
-npm run dev -- --host
+sudo bash deploy/install.sh
+sudoedit /etc/driftshield/service.env
+sudo bash deploy/install.sh
+sudo driftshieldctl provision engineering owner --name "Engineering"
 ```
 
-## 5) Production notes
+The first invocation creates the configuration file. Set your HTTPS URL and database credentials before running it again. The services bind to loopback and come up on boot. Configure your HTTPS proxy with [the example](deploy/Caddyfile). See [installation, backups, and upgrades](docs/operations.md) before putting customer data on the server.
 
-- Backend uses H2 by default for local development when no DB is configured.
-- In Render, the app prefers `DB_URL` / `DATABASE_URL` and will use the Postgres connection string automatically.
-- Frontend is served as a static build through Nginx for a lightweight production deployment.
+For private repositories, register a dedicated GitHub App with repository Metadata read access, install it on selected repositories, and run `sudo driftshieldctl connectgithub` as described in [GitHub setup](docs/github.md). Workspace owners can then import those repositories from the dashboard.
 
-## 6) Secure GitHub Actions deploy workflow
+## Verify and operate
 
-This repo includes a CI/CD workflow at [.github/workflows/render-deploy.yml](.github/workflows/render-deploy.yml) that validates the app and deploys both services to Render.
+```bash
+DS_DEV=1 python manage.py test
+DS_DEV=1 python manage.py makemigrations --check --dry-run
+for script in deploy/install.sh deploy/service-launch deploy/driftshieldctl; do bash -n "$script"; done
+sudo systemctl status driftshield-web driftshield-worker
+```
 
-Secrets to add in GitHub:
+The CI workflow runs tests against PostgreSQL. Deployment validation includes a live GitHub App scan, a deliberate change and restoration in a sandbox repository, and an SMTP delivery test. See the [acceptance procedure](docs/operations.md#acceptance-procedure).
 
-- `RENDER_API_KEY`
-- `RENDER_SERVICE_ID_BACKEND`
-- `RENDER_SERVICE_ID_FRONTEND`
+## Documentation
 
-How to get them:
+| Document | Contents |
+| --- | --- |
+| [Product](docs/product.md) | Positioning, buyer, capabilities, roadmap and commercial validation |
+| [Architecture](docs/architecture.md) | Module boundaries, worker behavior, consistency and failure handling |
+| [Database](docs/database.md) | Tables, constraints, retention and migration strategy |
+| [Web and API](docs/api.md) | Routes, payloads, permissions and response behavior |
+| [Frontend](docs/frontend.md) | Page map, states, accessibility and workflow design |
+| [GitHub](docs/github.md) | App setup, permissions, coverage and collection limits |
+| [Operations](docs/operations.md) | Install, upgrade, health checks, troubleshooting and recovery |
+| [Security](docs/security.md) | Trust model, security controls, and operator responsibilities |
 
-1. In Render, open your account settings and create an API key.
-2. Copy the service IDs from the Render dashboard URLs for each service.
-3. Add the values as GitHub repository secrets under Settings -> Secrets and variables -> Actions.
-
-Once configured, pushes to `main` will run the validation build and trigger both Render deployments automatically.
-
-# 📜 License
-
-This project was built for educational and hackathon purposes.
+[MIT license](LICENSE). The original prototype is in the [v1 commit](https://github.com/SiddharthSoumya/DriftShield/tree/dfdf88f8fe16318f110839bb3f98db75d0e2cbbe). The [v2 branch](https://github.com/SiddharthSoumya/DriftShield/tree/driftshield-v2) contains the earlier single-operator pilot.

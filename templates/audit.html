@@ -1,0 +1,10 @@
+{% extends "base.html" %}
+{% block title %}Workspace activity · DriftShield{% endblock %}
+{% block content %}
+<div class="page-head"><div><p class="crumb">{{ workspace.name }}</p><h1>Workspace activity</h1><p>Review the latest 100 recorded actions.</p></div></div>
+<section class="panel"><ul class="activity">
+  {% for entry in entries %}
+  <li><details><summary>{{ entry.label }}{% if entry.monitor %} · {{ entry.monitor.full_name }}{% endif %}</summary><small>{{ entry.actor }} · {{ entry.created_at|date:"M j, H:i T" }}</small><pre>{{ entry.formatted }}</pre></details></li>
+  {% empty %}<li>No workspace activity yet.</li>{% endfor %}
+</ul></section>
+{% endblock %}

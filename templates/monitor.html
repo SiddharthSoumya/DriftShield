@@ -1,0 +1,64 @@
+{% extends "base.html" %}
+{% block title %}{{ monitor.full_name }} · DriftShield{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div><a class="crumb" href="{% url 'overview' workspace.slug %}">← Repositories</a><h1>{{ monitor.full_name }}</h1><p><span class="pill {{ monitor.tone }}">{{ monitor.state }}</span> · {% if monitor.app_managed %}GitHub App{% else %}Public API{% endif %} · {{ monitor.interval_minutes }} minute cadence</p></div>
+  {% if member.role != "viewer" %}<form method="post" action="{% url 'monitor_action' workspace.slug monitor.pk %}" class="actions">{% csrf_token %}
+    {% if monitor.paused %}<button name="action" value="resume">Resume scans</button>{% else %}<button name="action" value="pause">Pause</button><button class="primary" name="action" value="scan">Queue scan</button>{% endif %}
+  </form>{% endif %}
+</div>
+{% if monitor.last_error %}<p class="notice error" role="status">{{ monitor.last_error }} Last good observation remains visible below.</p>{% endif %}
+<div class="metrics three">
+  <div class="metric"><span>Last successful scan</span><strong class="compact">{{ monitor.last_success|date:"M j, H:i T"|default:"Pending" }}</strong></div>
+  <div class="metric"><span>Next scheduled attempt</span><strong class="compact">{% if monitor.paused %}Paused{% else %}{{ monitor.next_scan|date:"M j, H:i T" }}{% endif %}</strong></div>
+  <div class="metric"><span>Approved baseline</span><strong class="compact">{% if monitor.baseline_version %}Version {{ monitor.baseline_version }}{% else %}Pending{% endif %}</strong></div>
+</div>
+<section class="panel">
+  <div class="section-head"><h2>Configuration comparison</h2></div>
+  <form method="post" action="{% url 'monitor_action' workspace.slug monitor.pk %}">{% csrf_token %}
+    <input type="hidden" name="revision" value="{{ monitor.revision }}">
+    <input type="hidden" name="version" value="{{ monitor.baseline_version }}">
+    <div class="table-wrap"><table>
+      <thead><tr><th scope="col">Setting</th><th scope="col">Approved</th><th scope="col">Last observed</th>{% if can_approve and member.role != 'viewer' %}<th scope="col">Approve</th>{% endif %}</tr></thead>
+      <tbody>{% for row in rows %}<tr>
+        <th scope="row">{{ row.label }} {% if row.changed and monitor.baseline_version %}<span class="pill danger">Changed</span>{% endif %}</th>
+        <td><pre>{{ row.expected }}</pre></td><td><pre>{{ row.observed }}</pre></td>
+        {% if can_approve and member.role != 'viewer' %}<td>{% if row.changed %}<label class="check"><input type="checkbox" name="field" value="{{ row.field }}" {% if not monitor.baseline_version %}checked required{% endif %}> <span>{{ row.label }}</span></label>{% else %}—{% endif %}</td>{% endif %}
+      </tr>{% endfor %}</tbody>
+    </table></div>
+    {% if can_approve and member.role != 'viewer' %}
+    <div class="toolbar"><div><label for="reason">Approval reason</label><input id="reason" name="reason" required maxlength="240" placeholder="Why is this configuration expected?"></div>
+    <button name="action" value="approve" class="primary">Approve selected settings</button></div>
+    {% endif %}
+  </form>
+  <p class="footnote">Rule coverage includes active rulesets returned by GitHub for the default branch. Classic branch protection, bypass configuration, and inactive rulesets are outside this view.</p>
+</section>
+<section class="panel">
+  <div class="section-head"><h2>Incidents</h2></div>
+  <ul class="activity">{% for incident in incidents %}<li>
+    <div><strong>{{ incident.label }}</strong> <span class="pill {% if incident.closed_at %}muted{% else %}danger{% endif %}">{{ incident.severity|capfirst }}</span>
+    <small>{{ incident.first_seen|date:"M j, H:i T" }} · {{ incident.occurrences }} observations · {% if incident.closed_at %}{{ incident.resolution|capfirst }}{% elif incident.acknowledged_at %}Acknowledged{% else %}Open{% endif %}</small></div>
+    {% if not incident.closed_at and not incident.acknowledged_at and member.role != 'viewer' %}
+    <form method="post" action="{% url 'monitor_action' workspace.slug monitor.pk %}">{% csrf_token %}
+      <input type="hidden" name="incident" value="{{ incident.pk }}"><button name="action" value="ack">Acknowledge</button>
+    </form>{% endif %}
+  </li>{% empty %}<li>No incidents recorded.</li>{% endfor %}</ul>
+</section>
+<div class="split">
+  <section class="panel"><div class="section-head"><h2>Recent scans</h2></div>
+    <ul class="activity">{% for scan in scans %}<li><div><strong>{{ scan.label }}</strong><small>{{ scan.collected_at|date:"M j, H:i T" }}{% if scan.error %} · {{ scan.error }}{% endif %}</small></div></li>{% empty %}<li>Waiting for the first scan.</li>{% endfor %}</ul>
+  </section>
+  <section class="panel"><div class="section-head"><h2>Baseline versions</h2></div>
+    <ul class="activity">{% for version in versions %}<li><details><summary>Version {{ version.version }} · {{ version.actor }}</summary><p>{{ version.reason }}</p><pre>{{ version.formatted }}</pre></details></li>{% empty %}<li>No baseline approved.</li>{% endfor %}</ul>
+  </section>
+</div>
+{% if member.role == "owner" %}
+<details class="panel pad"><summary>Remove monitor</summary>
+  <p>Removing this monitor deletes its baselines, scans, and incidents. Export evidence first if you need a copy.</p>
+  <form method="post" action="{% url 'remove_monitor' workspace.slug monitor.pk %}" class="inline">{% csrf_token %}
+    <div><label for="confirm">Type {{ monitor.full_name }} to confirm</label><input name="confirm" id="confirm" required></div>
+    <button>Remove repository monitor</button>
+  </form>
+</details>
+{% endif %}
+{% endblock %}

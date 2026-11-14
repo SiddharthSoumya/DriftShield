@@ -1,0 +1,24 @@
+# Web and HTTP interfaces
+
+The browser uses HTML forms with Django sessions and CSRF tokens. Successful mutations redirect to their destination. Errors are presented on the resulting page. Workspace membership is checked server-side. Guessed workspace or monitor IDs outside the caller's access return 404. A known workspace with an insufficient role returns 403 for its restricted actions.
+
+| Method and path | Role | Input or response |
+| --- | --- | --- |
+| GET, POST `/login/` | Public | Username/password with CSRF, throttled attempts |
+| POST `/logout/` | Signed in | End the session |
+| GET `/` | Signed in | Workspace selection or redirect |
+| GET `/w/{slug}/` | Member | Overview and repository list |
+| POST `/w/{slug}/repos/add/` | Owner, operator | `repository` in owner/name form |
+| POST `/w/{slug}/repos/import/` | Owner | Import selected installation repositories up to the workspace limit |
+| GET `/w/{slug}/repos/{id}/` | Member | Observation, baseline, findings and history |
+| POST `/w/{slug}/repos/{id}/action/` | Owner, operator | `action` of scan, pause, resume, ack, or approve |
+| POST `/w/{slug}/repos/{id}/remove/` | Owner | Exact repository name in `confirm` |
+| GET `/w/{slug}/audit/` | Member | Latest 100 workspace actions |
+| GET, POST `/w/{slug}/settings/` | Owner | Recipient, retention, policy, weekly digest, optional test email |
+| GET `/w/{slug}/evidence.csv` | Member | Most recent 10,000 incident records |
+| GET `/healthz` | Public | JSON database liveness with 200 or 503 |
+| GET `/w/{slug}/worker.json` | Owner | JSON heartbeat and health with 200 or 503 |
+
+Approval takes the last rendered `revision`, `version`, repeated `field` parameters and a non-empty `reason` of at most 240 characters. Acknowledgement takes `incident` and checks that the record belongs to the selected repository. CSV uses standard quoting and prefixes spreadsheet formula-like cells.
+
+These are same-origin application interfaces. A separately versioned token-authenticated customer API is a future extension.
