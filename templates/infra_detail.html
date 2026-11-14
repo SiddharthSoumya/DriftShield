@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+{% block title %}{{ target.name }} · DriftShield{% endblock %}
+{% block content %}
+<div class="page-head"><div><a class="crumb" href="{% url 'infra' workspace.slug %}">← Infrastructure</a>
+<h1>{{ target.name }}</h1><p>{{ target.get_platform_display }} · {{ target.scope }} · <span class="pill {{ target.tone }}">{{ target.label }}</span></p></div></div>
+{% if target.last_error %}<p class="notice error" role="status">Collector reported {{ target.last_error }}. The last successful observation remains available.</p>{% endif %}
+<div class="metrics three">
+<div class="metric"><span>Last successful observation</span><strong class="compact">{{ target.last_success|date:"M j, H:i T"|default:"Pending" }}</strong></div>
+<div class="metric"><span>Approved baseline</span><strong class="compact">{% if target.version %}Version {{ target.version }}{% else %}Pending{% endif %}</strong></div>
+<div class="metric"><span>Open findings</span><strong class="compact">{{ active|length }}</strong></div>
+</div>
+{% if can_initial and member.role != "viewer" %}
+<section class="panel pad"><h2>Approve initial baseline</h2>
+<p>The last observation contains {{ target.latest|length }} records. Review the full snapshot below before approving it.</p>
+<form method="post" class="inline" action="{% url 'infra_action' workspace.slug target.pk %}">{% csrf_token %}
+<input type="hidden" name="revision" value="{{ target.revision }}"><input type="hidden" name="version" value="{{ target.version }}">
+<div><label for="initial-reason">Approval reason</label><input name="reason" id="initial-reason" maxlength="240" required></div>
+<button name="action" value="approve" class="primary">Approve baseline</button>
+</form></section>
+{% endif %}
+<section class="panel pad"><h2>Findings and remediation</h2><p>{{ guidance }}</p>
+{% if not active %}<p>No open findings.</p>{% endif %}
+{% for finding in active %}
+<article class="panel pad">
+<h3>{{ finding.resource }}</h3>
+<p><span class="pill {% if finding.priority == 'high' %}danger{% else %}warning{% endif %}">{{ finding.priority|capfirst }} priority</span> · {{ finding.count }} observations</p>
+<div class="split"><div><h4>Approved</h4><pre>{{ finding.expected_text }}</pre></div><div><h4>Observed</h4><pre>{{ finding.actual_text }}</pre></div></div>
+{% if finding.review_at %}<p>Reviewed by {{ finding.reviewer }} · {{ finding.reason }}. Awaiting an observation that matches the baseline.</p>{% endif %}
+{% if fresh and member.role != "viewer" %}
+<form method="post" class="inline" action="{% url 'infra_action' workspace.slug target.pk %}">{% csrf_token %}
+<input type="hidden" name="finding" value="{{ finding.pk }}"><input type="hidden" name="revision" value="{{ target.revision }}"><input type="hidden" name="version" value="{{ target.version }}">
+<div><label for="reason-{{ finding.pk }}">Change ticket or review reason</label><input name="reason" id="reason-{{ finding.pk }}" required maxlength="240"></div>
+<button name="action" value="review">Record remediation review</button>
+{% if target.platform != "terraform" %}<button name="action" value="approve">Accept observed configuration</button>{% endif %}
+</form>
+{% endif %}
+</article>
+{% endfor %}
+</section>
+<section class="panel pad"><h2>Last successful observation</h2>
+{% if target.last_success %}
+<details><summary>View {{ target.latest|length }} records</summary><pre>{{ snapshot_text }}</pre></details>
+{% else %}<p>Waiting for the collector.</p>{% endif %}
+</section>
+<div class="split">
+<section class="panel pad"><h2>Recent observations</h2><ul class="activity">{% for observation in observations %}<li>{{ observation.received_at|date:"M j, H:i T" }} · {{ observation.status }}</li>{% empty %}<li>No deliveries recorded.</li>{% endfor %}</ul></section>
+<section class="panel pad"><h2>Resolved findings</h2><ul class="activity">{% for finding in recent %}<li>{{ finding.resource }} · {{ finding.resolution }}{% if finding.reviewer %} · {{ finding.reviewer }}{% endif %}</li>{% empty %}<li>No resolved findings.</li>{% endfor %}</ul></section>
+</div>
+<section class="panel pad"><h2>Baseline history</h2><ul class="activity">{% for version in versions %}<li>Version {{ version.version }} · {{ version.actor }} · {{ version.reason }}</li>{% empty %}<li>No approved baselines.</li>{% endfor %}</ul></section>
+{% if member.role == "owner" %}
+<section class="panel pad"><h2>Collector</h2><pre>{{ endpoint }}</pre>
+<form method="post" action="{% url 'infra_action' workspace.slug target.pk %}">{% csrf_token %}<button name="action" value="rotate">Rotate collector token</button></form>
+<details><summary>Remove target</summary><p>This deletes its baselines, deliveries and findings.</p>
+<form method="post" class="inline" action="{% url 'infra_action' workspace.slug target.pk %}">{% csrf_token %}
+<div><label for="confirm">Type {{ target.name }} to confirm</label><input name="confirm" id="confirm" required></div><button name="action" value="remove">Remove target</button></form></details>
+</section>
+{% endif %}
+{% endblock %}

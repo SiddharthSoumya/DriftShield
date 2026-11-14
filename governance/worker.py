@@ -9,6 +9,9 @@ from django.db import connection, transaction
 from django.db.models import Q
 from django.utils import timezone
 
+from infrastructure.domain import maintenance as maintain_infrastructure
+from infrastructure.models import Finding, Target
+
 from .domain import complete_scan, notify
 from .github import CollectionError
 from .models import Audit, Incident, LoginAttempt, Monitor, Notification, Scan, WorkerHealth, Workspace
@@ -110,9 +113,12 @@ def weekly_digests():
                     if monitor.last_success else now - monitor.next_scan > timedelta(minutes=5)
                 ) for monitor in monitors
             )
+            targets = Target.objects.filter(workspace=workspace)
+            infrastructure_findings = Finding.objects.filter(target__in=targets, closed_at__isnull=True).count()
             notify(workspace, f"DriftShield weekly summary: {workspace.name}",
                    f"Active monitors: {len(monitors)}\nOpen findings: {finding_count}\n"
                    f"Unavailable: {unavailable}\nOverdue: {overdue}\n"
+                   f"Infrastructure targets: {targets.count()}\nOpen infrastructure findings: {infrastructure_findings}\n"
                    f"Workspace: {settings.APP_ORIGIN}/w/{workspace.slug}/")
             workspace.last_digest_week = week
             workspace.save(update_fields=["last_digest_week"])
@@ -122,6 +128,7 @@ def prune():
     now = timezone.now()
     for workspace in Workspace.objects.iterator():
         cutoff = now - timedelta(days=workspace.retention_days)
+        maintain_infrastructure(workspace, cutoff, now)
         Scan.objects.filter(monitor__workspace=workspace, collected_at__lt=cutoff).delete()
         Audit.objects.filter(workspace=workspace, created_at__lt=cutoff).delete()
         Incident.objects.filter(monitor__workspace=workspace, closed_at__lt=cutoff).delete()

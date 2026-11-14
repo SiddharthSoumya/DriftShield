@@ -38,3 +38,7 @@ Back up with your PostgreSQL provider's tools or `pg_dump -Fc`. Restore into a f
 ## Acceptance procedure
 
 On a staging host, verify TLS and both systemd services. Provision two workspaces with separate users and confirm each can see only its own evidence. Connect a disposable GitHub App to a sandbox repository. Import it, collect its first observation, and approve all settings. Change a supported setting or an active ruleset, wait for a scan, verify the finding and SMTP email, acknowledge it, restore the setting, and verify that the next successful scan closes the incident. Repeat after removing installation access to verify unavailable collection preserves the last successful observation. Export evidence. Test restart and database restore before using customer data.
+
+## Infrastructure staging
+
+After the web and worker services are active, follow the [collector guide](infrastructure.md) for each supported environment. The server installer includes the ingestion code. Install the relevant provider CLI on the separate collector runner. Configure the HTTPS proxy to accept observations up to 1 MB. Verify baseline approval, a supported change, a failed collection, a restoration and evidence export against a sandbox scope before a customer rollout.

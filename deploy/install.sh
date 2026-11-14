@@ -52,7 +52,7 @@ if [[ "${DS_ORIGIN:-}" == "https://driftshield.example.com" || "${DS_DEV:-}" == 
 fi
 release="$(mktemp -d /opt/driftshield/releases/release.XXXXXXXX)"
 chmod 755 "$release"
-for item in manage.py requirements.txt driftshield governance templates static; do
+for item in manage.py requirements.txt driftshield governance infrastructure collector templates static; do
   cp -R -- "$source_dir/$item" "$release/"
 done
 install -m 0755 "$source_dir/deploy/service-launch" "$release/service-launch"

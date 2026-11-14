@@ -14,6 +14,7 @@
     {% if workspace %}
       <nav aria-label="Workspace">
         <a href="{% url 'overview' workspace.slug %}">Overview</a>
+        <a href="{% url 'infra' workspace.slug %}">Infrastructure</a>
         <a href="{% url 'audit' workspace.slug %}">Activity</a>
         {% if member.role == 'owner' %}<a href="{% url 'settings' workspace.slug %}">Settings</a>{% endif %}
       </nav>
