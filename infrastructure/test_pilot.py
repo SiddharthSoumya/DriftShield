@@ -202,6 +202,23 @@ class PilotWorkflowTests(PilotFixture, TestCase):
         call_command("revoke", "pilot", self.viewer.username, stdout=StringIO())
         self.assertEqual(self.client.get(self.detail).status_code, 404)
 
+    def test_offboarding_primary_operator_revokes_runner_and_session(self):
+        self.client.force_login(self.requester)
+        self.assertEqual(self.client.get(self.detail).status_code, 200)
+        call_command("revoke", "pilot", self.requester.username, stdout=StringIO())
+        self.enrollment.refresh_from_db()
+        self.target.refresh_from_db()
+        self.assertEqual(self.enrollment.status, "revoked")
+        self.assertEqual(self.target.token_hash, "")
+        self.assertEqual(self.client.get(self.detail).status_code, 404)
+        self.assertEqual(self.report(self.payload(1)).status_code, 401)
+        self.assertTrue(CoverageGap.objects.filter(target=self.target, ended_at=None).exists())
+
+    def test_inactive_operator_blocks_intake_even_without_revoke_command(self):
+        Membership.objects.filter(workspace=self.workspace, user=self.requester).update(role="viewer")
+        self.assertEqual(self.report(self.payload(1)).status_code, 401)
+        self.assertFalse(Delivery.objects.exists())
+
     def test_cadence_and_failed_then_silent_gap(self):
         self.report(self.payload(1, coverage="failed"))
         self.report(self.payload(0))

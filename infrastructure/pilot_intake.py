@@ -91,6 +91,16 @@ def end_gap(target, ended, reason, delivery=None, actor="collector"):
            delivery=str(delivery.identifier) if delivery else None)
 
 
+def active_runner_operator(target, user_id):
+    return Membership.objects.filter(
+        workspace=target.workspace, user_id=user_id, user__is_active=True, role__in=("owner", "operator"),
+    ).exists()
+
+
+class RunnerOperatorInactive(Exception):
+    """The runner credential no longer has an eligible operator."""
+
+
 def assert_enrolled_scope(target, payload, enrollment_id):
     enrollment = getattr(target, "runnerenrollment", None)
     if (enrollment is None or enrollment.status != RunnerEnrollment.Status.ACTIVE
@@ -98,6 +108,8 @@ def assert_enrolled_scope(target, payload, enrollment_id):
             or payload["scope"] != enrollment.scope or payload["credential_epoch"] != enrollment.credential_epoch
             or payload["source_id"] != target.source_id):
         raise ValueError("Observation scope does not match the enrolled runner.")
+    if not active_runner_operator(target, enrollment.primary_operator_id):
+        raise RunnerOperatorInactive
     return enrollment
 
 
@@ -166,9 +178,7 @@ def enroll_runner(target, actor, label, role, operator_id, ticket, now):
             or not 1 <= len(label) <= 100 or not label.isprintable()
             or not 1 <= len(ticket) <= 120 or not ticket.isprintable()):
         raise Conflict("Enter the enrolled AWS role prefix, runner label and change ticket.")
-    if not 0 < operator_id < 2**63 or not Membership.objects.filter(
-        workspace=target.workspace, user_id=operator_id, user__is_active=True, role__in=("owner", "operator")
-    ).exists():
+    if not 0 < operator_id < 2**63 or not active_runner_operator(target, operator_id):
         raise Conflict("Choose an active workspace owner or operator.")
     enrollment = getattr(target, "runnerenrollment", None)
     if enrollment is not None and enrollment.status == RunnerEnrollment.Status.ACTIVE:
@@ -189,8 +199,7 @@ def rotate_runner(target, actor, now, enrollment=None, **detail):
         raise Conflict("Enroll a runner first.")
     if enrollment.credential_epoch >= 2**31 - 1:
         raise Conflict("Runner credential epoch exhausted.")
-    if not Membership.objects.filter(workspace=target.workspace, user_id=enrollment.primary_operator_id,
-                                     user__is_active=True, role__in=("owner", "operator")).exists():
+    if not active_runner_operator(target, enrollment.primary_operator_id):
         raise Conflict("Re-enroll with an active primary runner operator.")
     initial = enrollment.credential_epoch == 0
     enrollment.credential_epoch += 1

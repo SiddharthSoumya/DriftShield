@@ -174,6 +174,8 @@ def _ingest(request, pk, *, v2):
             try:
                 with transaction.atomic():
                     result = pilot_intake.accept_pilot(target, data, timezone.now())
+            except pilot_intake.RunnerOperatorInactive:
+                return JsonResponse({"error": "Invalid collector credential."}, status=401)
             except pilot_intake.IntakeConflict as error:
                 return JsonResponse({"error": str(error), "code": error.code}, status=409)
             except (ValueError, TypeError, OverflowError):
