@@ -26,7 +26,7 @@ from django.views.decorators.http import require_POST
 
 from .domain import Conflict, INCIDENT_LABELS, approve, audit, notify
 from .github import CollectionError, FIELDS, GitHub, cipher, repo_name, signing_key
-from .pilot import health_payload
+from .pilot import activation_required, health_payload
 from .models import Audit, Baseline, Incident, Integration, LoginAttempt, Membership, Monitor, Notification, Scan, WorkerHealth, Workspace
 
 
@@ -100,6 +100,9 @@ def member_view(*roles):
             membership = get_object_or_404(Membership.objects.select_related("workspace"), workspace__slug=slug, user=request.user)
             if roles and membership.role not in roles:
                 return HttpResponse("This action requires a different workspace role.", status=403)
+            if (request.method not in ("GET", "HEAD", "OPTIONS")
+                    and activation_required(membership.workspace_id)):
+                return HttpResponse("Pilot activation has not been approved.", status=503)
             return view(request, membership, *args, **kwargs)
         return wrapped
     return decorator
@@ -108,7 +111,9 @@ def member_view(*roles):
 def locked_member(member, *roles):
     """Acquire workspace then membership locks before an authorized mutation."""
     workspace = get_object_or_404(Workspace.objects.select_for_update(), pk=member.workspace_id)
-    if settings.DS_PILOT_EBS and workspace.slug != settings.DS_PILOT_WORKSPACE:
+    if settings.DS_PILOT_EBS and (
+        workspace.slug != settings.DS_PILOT_WORKSPACE or activation_required(workspace.pk)
+    ):
         raise PermissionDenied
     current = Membership.objects.select_for_update().filter(pk=member.pk, workspace=workspace, user_id=member.user_id).first()
     if not current or current.role not in roles:

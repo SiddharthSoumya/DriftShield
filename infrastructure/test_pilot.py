@@ -95,8 +95,60 @@ class PilotFixture:
         self.assertEqual(Baseline.objects.get().pilot_approval.approver, self.approver)
 
 
-@override_settings(DS_PILOT_EBS=True, DS_PILOT_WORKSPACE="pilot", DS_INGEST_MIN_SECONDS=0)
+@override_settings(DS_PILOT_EBS=True, DS_PILOT_STAGING=True, DS_PILOT_WORKSPACE="pilot", DS_INGEST_MIN_SECONDS=0)
 class PilotWorkflowTests(PilotFixture, TestCase):
+    @override_settings(DS_RELEASE_SHA="a" * 40)
+    def test_failed_drill_keeps_evidence_and_exits_nonzero(self):
+        args = self.drill_args(checks_pass=False)
+        with self.assertRaisesMessage(CommandError, "Recovery drill failed"):
+            call_command(*args, stdout=StringIO())
+        self.assertIs(EvidenceEvent.objects.get(kind="recovery_drill").detail["passed"], False)
+
+    def drill_args(self, *, checks_pass=True):
+        now = timezone.now()
+        return (
+            "pilot_recovery", "record", "--workspace", "pilot", "--target", str(self.target.pk),
+            "--ticket", "REC-1", "--operator", "operator", "--started", (now - timedelta(minutes=2)).isoformat(),
+            "--ended", (now - timedelta(minutes=1)).isoformat(),
+            "--recovery-point", (now - timedelta(minutes=3)).isoformat(), "--backup-ref", "backup-1",
+            "--checksum", "f" * 64, "--release", "a" * 40, "--rto-target-seconds", "120",
+            "--rpo-target-seconds", "120", "--loss-seconds", "60", "--checks",
+            json.dumps(dict(access=True, credentials=True, evidence=True, collector=True, mailbox=checks_pass,
+                            rollback=True)),
+        )
+
+    @override_settings(DS_PILOT_STAGING=False, DS_PILOT_ACCEPTANCE_TICKET="CHG-1", DS_RELEASE_SHA="a" * 40,
+                       DS_PILOT_PROBE_TOKEN=PROBE_TOKEN, EMAIL_HOST="relay.test", APP_ORIGIN="https://pilot.test")
+    def test_production_needs_activation_and_reconciliation_invalidates_it(self):
+        if connection.vendor != "postgresql":
+            self.skipTest("Activation requires PostgreSQL.")
+        self.assertEqual(self.report(self.payload(1)).json()["code"], "activation_required")
+        self.assertEqual(self.action("rotate").status_code, 503)
+        with patch("governance.management.commands.work.close_old_connections"), self.assertRaisesMessage(
+            CommandError, "activation has not been approved",
+        ):
+            call_command("work", "--once", stdout=StringIO())
+        args = ("pilot_check", "--workspace", "pilot", "--activate", "--ticket", "CHG-1",
+                "--operator", "operator", "--recovery-ticket", "REC-1", "--acceptance-ref", "SIGNED-1")
+        with override_settings(DS_PILOT_RECOVERY_FENCED=True):
+            with self.assertRaisesMessage(CommandError, "passing recovery drill"):
+                call_command(*args, stdout=StringIO())
+            call_command(*self.drill_args(), stdout=StringIO())
+            call_command(*args, stdout=StringIO())
+            self.assertEqual(self.report(self.payload(1)).json()["code"], "recovery_fenced")
+        self.assertEqual(self.report(self.payload(1)).status_code, 200)
+        with override_settings(DS_RELEASE_SHA="b" * 40):
+            self.assertEqual(self.report(self.payload(2)).json()["code"], "activation_required")
+        with self.assertRaisesMessage(CommandError, "Recovery drill failed"):
+            call_command(*self.drill_args(checks_pass=False), stdout=StringIO())
+        self.assertEqual(self.report(self.payload(2)).json()["code"], "activation_required")
+        with override_settings(DS_PILOT_RECOVERY_FENCED=True):
+            call_command("pilot_recovery", "reconcile", "--workspace", "pilot", "--target", str(self.target.pk),
+                         "--ticket", "REC-2", "--operator", "operator", stdout=StringIO())
+        from governance.pilot import activation_required
+
+        self.assertTrue(activation_required(self.workspace.pk))
+
     def test_partial_cannot_seed_and_replay_is_idempotent(self):
         partial = self.payload(1, coverage="partial", error="incomplete_inventory")
         self.assertEqual(self.report(partial).json()["coverage"], "partial")
@@ -333,7 +385,7 @@ class PilotWorkflowTests(PilotFixture, TestCase):
         self.assertNotIn("mailbox_confirmed", payload)
 
 
-@override_settings(DS_PILOT_EBS=True, DS_PILOT_WORKSPACE="pilot", DS_INGEST_MIN_SECONDS=0)
+@override_settings(DS_PILOT_EBS=True, DS_PILOT_STAGING=True, DS_PILOT_WORKSPACE="pilot", DS_INGEST_MIN_SECONDS=0)
 class PilotPostgresTests(PilotFixture, TransactionTestCase):
     def test_concurrent_intake_commits_one_delivery_and_gap(self):
         if connection.vendor != "postgresql":

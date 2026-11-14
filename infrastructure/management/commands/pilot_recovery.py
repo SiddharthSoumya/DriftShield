@@ -45,8 +45,13 @@ class Command(BaseCommand):
                 action.add_argument("--loss-seconds", required=True, type=int)
                 action.add_argument("--checks", required=True, type=json.loads)
 
-    @transaction.atomic
     def handle(self, *args, **options):
+        with transaction.atomic():
+            result = self._execute(**options)
+        if result is False:
+            raise CommandError("Recovery drill failed the recorded acceptance criteria.")
+
+    def _execute(self, **options):
         if not settings.DS_PILOT_EBS or options["workspace"] != settings.DS_PILOT_WORKSPACE:
             raise CommandError("Use the configured dedicated pilot workspace.")
         action = options["action"]
@@ -61,8 +66,7 @@ class Command(BaseCommand):
             )
             now = timezone.now()
             if action == "record":
-                self._record(target, operator, ticket, now, options)
-                return
+                return self._record(target, operator, ticket, now, options)
             prior = EvidenceEvent.objects.filter(target=target, kind="recovery_reconciled", detail__ticket=ticket).exists()
             if action == "issue-runner":
                 if not prior:
@@ -113,4 +117,6 @@ class Command(BaseCommand):
                rto_target_seconds=options["rto_target_seconds"], rpo_target_seconds=options["rpo_target_seconds"],
                checks=checks, passed=passed)
         audit(target.workspace, operator, "pilot_recovery_drill", target=target.pk, ticket=ticket, passed=passed)
-        self.stdout.write("pass" if passed else "fail")
+        if passed:
+            self.stdout.write("pass")
+        return passed

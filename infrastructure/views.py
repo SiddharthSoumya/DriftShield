@@ -21,6 +21,7 @@ from django.views.decorators.http import require_POST, require_safe
 from collector.contract import EBS_SCOPE, IDENTIFIER, MAX_BODY, PLATFORMS, decode, envelope, pilot_envelope, pilot_time
 from governance.domain import audit
 from governance.models import Membership, Workspace
+from governance.pilot import activation_required
 from governance.views import csv_download, locked_member, member_view
 from .domain import Conflict, RateLimited, accept, approve, digest, fresh, issue_token, refresh_exceptions, same, status
 from .models import CoverageGap, Delivery, DriftException, EvidenceEvent, Finding, PilotApproval, Target
@@ -167,6 +168,9 @@ def _ingest(request, pk, *, v2):
         if v2:
             if target.profile != Target.Profile.EBS_PILOT or target.retired_at or workspace.slug != settings.DS_PILOT_WORKSPACE:
                 return JsonResponse({"error": "Pilot intake unavailable.", "code": "pilot_unavailable"}, status=404)
+            if activation_required(workspace.pk):
+                return JsonResponse({"error": "Pilot activation has not been approved.",
+                                     "code": "activation_required"}, status=503)
             try:
                 with transaction.atomic():
                     result = pilot_intake.accept_pilot(target, data, timezone.now())

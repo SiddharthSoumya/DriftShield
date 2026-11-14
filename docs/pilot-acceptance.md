@@ -16,10 +16,10 @@ sudo driftshieldctl provision "$DS_PILOT_WORKSPACE" "$DS_PILOT_SECOND_OWNER" --r
 sudo driftshieldctl pilot_enroll --workspace "$DS_PILOT_WORKSPACE" --scope "$DS_PILOT_EBS_SCOPE" \
   --role-prefix "$DS_PILOT_ROLE_PREFIX" --owner "$DS_PILOT_OWNER" \
   --runner-operator "$DS_PILOT_OWNER" --runner-label "$DS_PILOT_RUNNER_LABEL" --ticket "$CHANGE_TICKET"
-sudo driftshieldctl pilot_check --workspace "$DS_PILOT_WORKSPACE" --activate
+
 ```
 
-Open the allowlisted runner and browser routes on staging. Set the fence to 0 in `service.env`, restart web and enable and start the worker with `sudo systemctl enable --now driftshield-worker.service`. Start the [runner schedule](infrastructure.md#enrolled-ebs-pilot-runner). Do not accept production reliance before the following gates pass.
+For the isolated staging instance only, set `DS_PILOT_STAGING=1` and open the allowlisted runner and browser routes. Set the fence to 0 in `service.env`, restart web and enable and start the worker with `sudo systemctl enable --now driftshield-worker.service`. Start the [runner schedule](infrastructure.md#enrolled-ebs-pilot-runner). Do not accept production reliance before the following gates pass.
 
 ## Run the acceptance gates
 
@@ -60,7 +60,7 @@ sudo driftshieldctl pilot_recovery issue-runner --workspace "$DS_PILOT_WORKSPACE
   --target "$DS_PILOT_TARGET" --ticket "$RECOVERY_TICKET" --operator "$RECOVERY_OPERATOR"
 ```
 
-4. Store the new runner credentials in the private secret store. On the isolated rehearsal, clear the fence while production routes remain closed. On cutover, stop the old web and worker and keep browser writes and production mail closed. Open only the runner route, clear the fence, and restart web. Verify a fresh complete observation before enabling browser mutations or enabling and starting the worker with the agreed relay. Check external health, membership, token invalidation, evidence checksum and inbox receipt.
+4. Store the new runner credentials in the private secret store. On the isolated rehearsal, clear the fence while production routes remain closed. On cutover, stop the old web and worker and keep browser writes and production mail closed. Record production activation for the new recovery ticket as described below. Open only the runner route, clear the fence, and restart web. Verify a fresh complete observation before enabling browser mutations or enabling and starting the worker with the agreed relay. Check external health, membership, token invalidation, evidence checksum and inbox receipt.
 5. Append the recovery record and save the result with the external backup evidence:
 
 ```bash
@@ -72,10 +72,22 @@ sudo driftshieldctl pilot_recovery record --workspace "$DS_PILOT_WORKSPACE" \
   --loss-seconds "$MEASURED_LOSS_SECONDS" --checks "$RECOVERY_CHECKS_JSON"
 ```
 
-The checks JSON contains booleans for `access`, `credentials`, `evidence`, `collector`, `mailbox`, and `rollback`. A reported `fail` blocks acceptance.
+The checks JSON contains booleans for `access`, `credentials`, `evidence`, `collector`, `mailbox`, and `rollback`. A failed drill is recorded and exits nonzero.
 
 Only repoint to the previous release against the same database when compatibility has already been exercised and no incompatible writes occurred. Stop both units, preserve the current release and DB, then use `ln -sfn "$PREVIOUS_RELEASE" /opt/driftshield/current.new` and `mv -Tf /opt/driftshield/current.new /opt/driftshield/current` as root. Restore matching unit files if they changed, reload systemd, start web and keep the worker stopped until checks pass. After pilot writes, do not run the legacy release against the new database or reverse the evidence migrations. Restore the compatible release and backup to a separate host and reconcile before opening the private routes.
 
 ## Sign-off
 
 Keep the release SHA, proof from each acceptance gate, measured recovery results, evidence custody and retention, support hours, primary and backup owners, and buyer sign-off in the customer change record. Keep retired target data until the agreed handoff and retention window. Teardown that would delete database evidence requires separate customer authorization and a verified protected export.
+
+### Record production activation
+
+Keep `DS_PILOT_STAGING=0` and `DS_PILOT_RECOVERY_FENCED=1`. Set `DS_PILOT_ACCEPTANCE_TICKET` in the service environment to the approved change ticket. After completing the staging acceptance gates, record the passing recovery drill for the installed release and use the customer-approved acceptance record:
+
+```bash
+sudo driftshieldctl pilot_check --workspace "$DS_PILOT_WORKSPACE" --activate \
+  --ticket "$DS_PILOT_ACCEPTANCE_TICKET" --operator "$RECOVERY_OPERATOR" \
+  --recovery-ticket "$RECOVERY_TICKET" --acceptance-ref "$PILOT_ACCEPTANCE_REF"
+```
+
+Clear the fence only after the command succeeds. Keep browser writes and production mail closed until the new runner has submitted a fresh complete observation. A later reconciliation invalidates the earlier activation and requires a passing recovery record and a new activation.

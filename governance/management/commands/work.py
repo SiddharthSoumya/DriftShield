@@ -5,12 +5,14 @@ import time
 
 import httpx
 from django.conf import settings
-from django.core.management.base import BaseCommand
+from django.core.management.base import BaseCommand, CommandError
 from django.db import close_old_connections
 from django.utils import timezone
 
 from governance.github import GitHub
 from governance.worker import check_overdue, deliver_one, enqueue_mail_canary, heartbeat, prune, scan_one, weekly_digests
+from governance.models import Workspace
+from governance.pilot import activation_required
 from infrastructure.domain import check_overdue as check_infrastructure
 from infrastructure.domain import expire_exceptions
 from infrastructure.pilot_intake import check_pilot_gaps
@@ -40,6 +42,12 @@ class Command(BaseCommand):
                 try:
                     close_old_connections()
                     if settings.DS_PILOT_EBS:
+                        workspace_id = Workspace.objects.filter(slug=settings.DS_PILOT_WORKSPACE).values_list("pk", flat=True).first()
+                        if activation_required(workspace_id):
+                            if options["once"]:
+                                raise CommandError("Pilot activation has not been approved.")
+                            stop.wait(5)
+                            continue
                         now = timezone.now()
                         if last_canary is None or now.timestamp() // 900 > last_canary.timestamp() // 900:
                             last_canary = enqueue_mail_canary(now)

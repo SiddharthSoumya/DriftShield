@@ -114,7 +114,7 @@ if [[ "${DS_PILOT_EBS:-0}" == 1 ]]; then
   systemctl disable --now driftshield-worker.service
   systemctl enable --now driftshield-web.service
   systemctl is-active driftshield-web.service
-  echo "Pilot fenced. After private access and enrollment, run: sudo driftshieldctl pilot_check --workspace $DS_PILOT_WORKSPACE --activate"
+  echo "Pilot fenced. Complete docs/pilot-acceptance.md before recording production activation."
 else
   systemctl enable --now driftshield-web.service driftshield-worker.service
   systemctl is-active driftshield-web.service driftshield-worker.service

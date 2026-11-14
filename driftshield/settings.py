@@ -139,11 +139,16 @@ if _pilot_ebs not in ("0", "1"):
     raise ImproperlyConfigured("DS_PILOT_EBS must be 0 or 1.")
 DS_PILOT_EBS = _pilot_ebs == "1"
 
-_pilot_fenced = os.environ.get("DS_PILOT_RECOVERY_FENCED", "0")
+_pilot_fenced = os.environ.get("DS_PILOT_RECOVERY_FENCED", "1" if DS_PILOT_EBS else "0")
 if _pilot_fenced not in ("0", "1"):
     raise ImproperlyConfigured("DS_PILOT_RECOVERY_FENCED must be 0 or 1.")
 DS_PILOT_RECOVERY_FENCED = _pilot_fenced == "1"
 
+_pilot_staging = os.environ.get("DS_PILOT_STAGING", "0")
+if _pilot_staging not in ("0", "1"):
+    raise ImproperlyConfigured("DS_PILOT_STAGING must be 0 or 1.")
+DS_PILOT_STAGING = _pilot_staging == "1"
+DS_PILOT_ACCEPTANCE_TICKET = os.environ.get("DS_PILOT_ACCEPTANCE_TICKET", "")
 DS_PILOT_WORKSPACE = os.environ.get("DS_PILOT_WORKSPACE", "")
 DS_PILOT_PROBE_TOKEN = os.environ.get("DS_PILOT_PROBE_TOKEN", "")
 DS_RELEASE_SHA = os.environ.get("DS_RELEASE_SHA", "")

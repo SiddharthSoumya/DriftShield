@@ -7,7 +7,7 @@ from django.db import connection
 from django.db.models import Min
 from django.utils import timezone
 
-from infrastructure.models import Target
+from infrastructure.models import EvidenceEvent, Target
 from infrastructure.pilot_intake import coverage_state
 from .models import Integration, Membership, Monitor, Notification, WorkerHealth, Workspace
 
@@ -51,6 +51,27 @@ def topology_issues(slug, *, activate=False, bootstrap=False):
     return issues
 
 
+def activation_required(workspace_id):
+    if not settings.DS_PILOT_EBS or settings.DS_PILOT_STAGING:
+        return False
+    if not settings.DS_PILOT_ACCEPTANCE_TICKET or not settings.DS_RELEASE_SHA:
+        return True
+    event = EvidenceEvent.objects.filter(
+        target__workspace_id=workspace_id, target__retired_at=None,
+        target__profile=Target.Profile.EBS_PILOT,
+        kind__in=("pilot_activated", "recovery_reconciled"),
+    ).order_by("-pk").first()
+    if (event is None or event.kind != "pilot_activated"
+            or event.detail.get("release") != settings.DS_RELEASE_SHA
+            or event.detail.get("ticket") != settings.DS_PILOT_ACCEPTANCE_TICKET):
+        return True
+    return EvidenceEvent.objects.filter(
+        target_id=event.target_id, pk__gt=event.pk, kind="recovery_drill",
+        detail__ticket=event.detail.get("recovery_ticket"), detail__passed=False,
+    ).exists()
+
+
+
 def health_payload(now):
     workspace = Workspace.objects.filter(slug=settings.DS_PILOT_WORKSPACE).first()
     target = Target.objects.filter(workspace=workspace, profile=Target.Profile.EBS_PILOT, retired_at=None).first()
@@ -75,7 +96,7 @@ def health_payload(now):
     status = "healthy"
     if settings.DS_PILOT_RECOVERY_FENCED:
         status = "recovery_fenced"
-    elif (workspace is None or not settings.EMAIL_HOST or not workspace.recipient
+    elif (workspace is None or activation_required(workspace.pk) or not settings.EMAIL_HOST or not workspace.recipient
           or worker_age is None or worker_age >= 300
           or collector in ("unknown", "failed", "partial", "stale", "inactive")
           or (pending_age is not None and pending_age >= 600) or failures):
