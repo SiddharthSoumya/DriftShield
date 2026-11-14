@@ -139,3 +139,27 @@ jobs:
           inspect | python -c 'import json, sys; assert json.load(sys.stdin)["resources"]["container/driftshield-ci"]["memory_bytes"] == 134217728'
           docker update --memory 256m driftshield-ci
           inspect | python -c 'import json, sys; assert json.load(sys.stdin)["resources"]["container/driftshield-ci"]["memory_bytes"] == 268435456'
+  kubernetes-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: helm/kind-action@a1b0e391336a6ee6713a0583f8c6240d70863de3 # v1.12.0
+        with:
+          cluster_name: driftshield-ci
+      - name: Collect a real deployment and service change
+        shell: bash
+        run: |
+          set -euo pipefail
+          context=kind-driftshield-ci
+          kubectl --context "$context" create namespace driftshield
+          kubectl --context "$context" -n driftshield create deployment billing --image=nginx:1.27
+          kubectl --context "$context" -n driftshield expose deployment billing --port=80
+          collect() {
+            python -m collector kubernetes --scope ci:driftshield --context "$context" --namespace driftshield --preview
+          }
+          collect | python -c 'import json, sys; r=json.load(sys.stdin)["resources"]; assert r["deployment/driftshield/billing"]["replicas"] == 1; assert r["service/driftshield/billing"]["service_type"] == "ClusterIP"'
+          kubectl --context "$context" -n driftshield scale deployment billing --replicas=2
+          collect | python -c 'import json, sys; assert json.load(sys.stdin)["resources"]["deployment/driftshield/billing"]["replicas"] == 2'
