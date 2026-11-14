@@ -160,7 +160,7 @@ jobs:
           trap cleanup EXIT
           export PILOT_RESTORE_STATE="$scratch/state.json"
           docker exec "$PG_CONTAINER" createdb -U driftshield pilot_source
-          git worktree add --detach "$scratch/previous" a3b4d43
+          git worktree add --detach "$scratch/previous" 65bb4b6b25682b1fabb387f27cb4bc346952e60c
           (
             cd "$scratch/previous"
             export DS_DB_NAME=pilot_source
