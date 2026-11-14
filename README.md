@@ -11,12 +11,16 @@ DriftShield compares approved configuration with observations from Terraform/Ope
 
 Review the [coverage and collector guide](docs/infrastructure.md) before onboarding. Infrastructure remediation is applied through the team's existing tools and then verified by DriftShield.
 
+## Release status
+
+The current code is on `main`, including the infrastructure expansion and the [pre-release hardening](https://github.com/SiddharthSoumya/DriftShield/pull/5). It is ready for staging. A dedicated, customer-hosted pilot is conditional on the [deployment acceptance gates](docs/release-readiness.md#customer-hosted-release-gates). Public shared hosting remains outside the approved release scope.
+
 ## Try it locally
 
 With Python 3.12 or newer:
 
 ```bash
-git clone --branch infrastructure-drift https://github.com/SiddharthSoumya/DriftShield.git
+git clone --branch main https://github.com/SiddharthSoumya/DriftShield.git
 cd DriftShield
 python3 -m venv .venv
 source .venv/bin/activate
@@ -53,13 +57,13 @@ for script in deploy/install.sh deploy/service-launch deploy/driftshieldctl; do 
 sudo systemctl status driftshield-web driftshield-worker
 ```
 
-The CI workflow runs tests against PostgreSQL. Deployment validation includes a live GitHub App scan, a deliberate change and restoration in a sandbox repository, and an SMTP delivery test. See the [acceptance procedure](docs/operations.md#acceptance-procedure).
+CI covers PostgreSQL regression tests, systemd installation and upgrade, ingestion, test-database outage and recovery, backup restoration, and live smoke tests for Terraform, OpenTofu, Docker and Kubernetes. The [deployment acceptance procedure](docs/operations.md#acceptance-procedure) separately calls for a real GitHub App scan, AWS sandbox collection for AWS deployments, SMTP mailbox delivery, external worker monitoring, and clean-host recovery.
 
 ## Documentation
 
 | Document | Contents |
 | --- | --- |
-| [Product](docs/product.md) | Original GitHub scope, positioning, buyer and roadmap |
+| [Product](docs/product.md) | Current scope, positioning, buyers and roadmap |
 | [Infrastructure](docs/infrastructure.md) | Coverage, permissions, scheduling and remediation workflow |
 | [Commercial](docs/commercial.md) | Customer-hosted and managed deployment models |
 | [Architecture](docs/architecture.md) | Module boundaries, worker behavior, consistency and failure handling |

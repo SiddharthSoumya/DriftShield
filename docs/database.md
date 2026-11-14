@@ -1,6 +1,6 @@
 # Database design
 
-Production uses PostgreSQL. Development can use SQLite. Migrations are in `governance/migrations` and apply through `manage.py migrate`.
+Production uses PostgreSQL. Development can use SQLite. Migrations are in `governance/migrations` and `infrastructure/migrations` and apply through `manage.py migrate`.
 
 | Table | Design |
 | --- | --- |
@@ -13,7 +13,7 @@ Production uses PostgreSQL. Development can use SQLite. Migrations are in `gover
 | Incident | Monitor, setting or policy, expected and observed values, severity, baseline version, first/last seen, acknowledgements and resolution |
 | Audit | Workspace, optional monitor, action, actor, details and event time |
 | Notification | Workspace, resolved recipient, subject/body, due time, lease, attempts and terminal state |
-| WorkerHealth | Last heartbeat for the worker role |
+| WorkerHealth | Latest completed worker tick and stage-specific timestamps for email, GitHub collection, freshness and retention |
 | LoginAttempt | Hashed rate-limit key, attempt count and window |
 | Django auth and sessions | Password hashes, account records and server-side sessions |
 
@@ -21,8 +21,8 @@ Workspace and repository identifiers form unique constraints. A partial unique i
 
 Hourly maintenance removes scans, resolved incidents, audit records, and notification history older than the workspace retention window. It also prunes expired sessions and login throttle records. Current state, open incidents and baseline versions are retained until monitor removal. Removing a monitor deletes its baselines, scans and incidents. Workspace audit retains the removal event. Export before removal if your policy requires historical evidence.
 
-v1 and v2 use incompatible data models. v3 installs into a fresh PostgreSQL database. Export any earlier evidence independently and approve fresh baselines from live scans.
+v1 and v2 use incompatible data models. Migrating from v1 or v2 requires a fresh PostgreSQL database, a separate export of prior evidence and fresh baseline approvals. Existing v3 deployments upgrade in place through the versioned migrations.
 
 ## Infrastructure tables
 
-`Target` belongs to a workspace and stores platform/scope, hashed target token, latest observation, revision and baseline version. `Delivery` is unique per target and UUID. `Baseline` is versioned per target. `Finding` records expected/observed projections and has at most one open row per target/resource. Intake and review hold workspace and target row locks and update evidence and outbox atomically. Hourly maintenance prunes old deliveries and closed findings.
+`Target` belongs to a workspace and stores platform/scope, hashed target token and expiry, observed source ID, latest observation, revision and baseline version. `Delivery` is unique per target and UUID and records a content hash for new observations. `Baseline` is versioned per target. `Finding` records expected/observed projections and has at most one open row per target/resource. Intake and review hold workspace and target row locks and update evidence and outbox atomically. Hourly maintenance prunes old deliveries and closed findings.

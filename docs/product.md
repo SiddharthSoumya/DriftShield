@@ -17,7 +17,7 @@ This is desk research. It establishes existing alternatives and informs the feat
 
 ## What ships
 
-GitHub.com public and installation-scoped private repository collection, settings/ruleset diffs, three optional workspace policies, selective approval and acknowledgements, audit history, CSV evidence, health and freshness, email and weekly digests, workspace roles and server-managed provisioning, PostgreSQL and Linux systemd deployment.
+GitHub.com public and installation-scoped private repository collection, settings and active ruleset diffs, and workspace policy checks. Infrastructure support includes Terraform/OpenTofu refresh summaries, Docker, Kubernetes, selected AWS resources and custom snapshots. The product records baseline approvals, remediation review and subsequent observations, and provides email alerts, audit history and CSV evidence. It ships with workspace roles, server-managed provisioning, PostgreSQL, and Linux systemd deployment. See [collector coverage](infrastructure.md) and [release gates](release-readiness.md).
 
 ## Commercial pilot
 

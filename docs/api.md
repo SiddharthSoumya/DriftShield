@@ -16,15 +16,16 @@ The browser uses HTML forms with Django sessions and CSRF tokens. Successful mut
 | GET `/w/{slug}/audit/` | Member | Latest 100 workspace actions |
 | GET, POST `/w/{slug}/settings/` | Owner | Recipient, retention, policy, weekly digest, optional test email |
 | GET `/w/{slug}/evidence.csv` | Member | Most recent 10,000 incident records |
-| GET `/healthz` | Public | JSON database liveness with 200 or 503 |
-| GET `/w/{slug}/worker.json` | Owner | JSON heartbeat and health with 200 or 503 |
+| GET `/livez` | Public | Web-process liveness without a database query |
+| GET `/healthz` | Public | JSON database readiness with 200 or 503 |
+| GET `/w/{slug}/worker.json` | Owner | JSON worker and stage health with 200 or 503 |
 
 Approval takes the last rendered `revision`, `version`, repeated `field` parameters and a non-empty `reason` of at most 240 characters. Acknowledgement takes `incident` and checks that the record belongs to the selected repository. CSV uses standard quoting and prefixes spreadsheet formula-like cells.
 
-These are same-origin application interfaces. A separately versioned token-authenticated customer API is a future extension.
+The browser routes use same-origin sessions. The versioned collector ingestion route below uses a target credential.
 
 ## Infrastructure interface
 
-`POST /api/v1/infrastructure/{id}/observations/` accepts a scoped bearer credential and JSON with `schema: 1`, `platform`, `scope`, UUID `delivery`, timezone-aware `captured_at`, and either `resources` or `error`. Resource IDs map to allowlisted scalar fields. An identical retry returns the original status within the acceptance window. A conflicting reuse of a delivery ID returns 409. New accepted deliveries are limited to one per target per minute (429 with Retry-After). Stale order returns 409, wrong scope or invalid input 422, invalid token 401, and missing or oversized body 413. Results are `unbaselined`, `match`, `drift`, or `error`. Workspace owners create, rotate and remove targets. Operators and owners can approve baselines and record remediation reviews. Viewers can inspect targets and export evidence.
+`POST /api/v1/infrastructure/{id}/observations/` accepts a scoped bearer credential and JSON with `schema: 1`, `platform`, `scope`, UUID `delivery`, timezone-aware `captured_at`, and either `resources` or `error`. Resource IDs map to allowlisted scalar fields. An identical retry returns the original status within the acceptance window. A conflicting reuse of a delivery ID returns 409. New accepted deliveries are limited to one per target per minute (429 with Retry-After). Stale order returns 409, wrong scope or invalid input 422, invalid token 401, and missing or oversized body 413. Results are `unbaselined`, `match`, `drift`, or `error`. Workspace owners create and remove targets and rotate or revoke collector credentials. Operators and owners can approve baselines and record remediation reviews. Viewers can inspect targets and export evidence.
 
-A successful infrastructure envelope may include `source_id`. A bound target rejects absent or changed source IDs on later successful observations. Collector credentials expire and owners may revoke them without deleting the target. Both CSV endpoints stream up to 10,000 rows. `GET /livez` checks process liveness without a database query.
+A successful infrastructure envelope may include `source_id`. A bound target rejects absent or changed source IDs on later successful observations. Collector credentials expire and owners may revoke them without deleting the target. Both CSV endpoints stream up to 10,000 rows.
