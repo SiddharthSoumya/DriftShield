@@ -1,6 +1,8 @@
 # Release readiness and trust boundaries
 
-The initial hardening review examined the merged infrastructure release at `71c771f`. The hardening branch adds native intake schema checks, duplicate delivery consistency, accepted-observation rate limits, credential separation and bounded provider output, more conservative Terraform evidence labels, proxy safeguards, and a dependency audit in CI.
+The [pre-release hardening PR](https://github.com/SiddharthSoumya/DriftShield/pull/5) is merged on `main` at `3b7dee6`. The current code includes collector expiry and revocation, observed source binding, authorization rechecks for mutations, verified remote database TLS, streaming evidence exports, and stage-specific worker health. See the [audit](pre-release-audit.md) for the findings and remaining risks.
+
+The release supports staging and a dedicated customer-hosted pilot after the gates below pass. Public shared hosting still requires stronger identity and tenant isolation, independent review, and measured capacity and recovery.
 
 ## Customer-hosted release gates
 
