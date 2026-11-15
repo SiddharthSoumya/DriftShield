@@ -1,6 +1,6 @@
-<section class="panel pad">
+<section class="panel pad" id="coverage">
 <h2>EBS collection</h2>
-{% if recovery_fenced %}<p role="status">Recovery in progress. Changes and intake are paused.</p>{% endif %}
+{% if recovery_fenced %}<p role="status">Pilot writes are fenced. Changes and intake are paused pending activation or recovery.</p>{% endif %}
 {% if target.retired_at %}<p>Retired {{ target.retired_at|date:"M j, H:i T" }}. Evidence remains available.</p>{% endif %}
 <dl>
 <dt>Last collector contact</dt><dd>{{ target.last_contact_at|date:"M j, H:i T"|default:"Pending" }}</dd>
@@ -36,8 +36,8 @@
 </form></details>
 {% endif %}
 </section>
-<section class="panel pad">
-<h2>Baseline approvals</h2>
+<section class="panel pad" id="baselines">
+<h2>Baseline approvals</h2><p>Request changes with a ticket. A different workspace owner can approve them when coverage is complete.</p>
 {% if pilot_complete and pilot_writable and member.role != "viewer" %}
 {% if not target.version or active %}
 <form method="post" class="stack" action="{% url 'infra_action' workspace.slug target.pk %}">{% csrf_token %}

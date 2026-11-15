@@ -17,25 +17,101 @@ The current code is on `main`, including the infrastructure expansion and the [p
 
 ## Try it locally
 
-With Python 3.12 or newer:
+Use Python 3.12+ and Git. These walkthroughs use a local SQLite database and bind the app to your machine. Keep the web process and worker in separate terminals from the same checkout. If you already have a checkout, open its folder and skip the clone command.
+
+### Windows (PowerShell)
+
+Terminal 1 starts the web app. Use the virtual environment's interpreter directly, so there is no need to change PowerShell's execution policy.
+
+```powershell
+git clone --branch main https://github.com/SiddharthSoumya/DriftShield.git
+Set-Location DriftShield
+py -3.12 -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+$env:DS_DEV = "1"
+.\.venv\Scripts\python.exe manage.py migrate
+.\.venv\Scripts\python.exe manage.py provision demo owner --name "Demo workspace"
+.\.venv\Scripts\python.exe manage.py runserver 127.0.0.1:8000
+```
+
+Terminal 2 processes scheduled scans. Open PowerShell in the checkout.
+
+```powershell
+$env:DS_DEV = "1"
+.\.venv\Scripts\python.exe manage.py work
+```
+
+If `py` is unavailable, use `python -m venv .venv` after checking that `python --version` reports 3.12 or newer. Provisioning prompts for a password when it creates the user.
+
+### macOS (Terminal)
+
+Terminal 1 starts the web app. Use a Python 3.12+ interpreter on your PATH.
 
 ```bash
 git clone --branch main https://github.com/SiddharthSoumya/DriftShield.git
 cd DriftShield
+python3 --version
 python3 -m venv .venv
-source .venv/bin/activate
-python -m pip install -r requirements.txt
+.venv/bin/python -m pip install -r requirements.txt
 export DS_DEV=1
-python manage.py migrate
-python manage.py provision demo owner --name "Demo workspace"
-python manage.py runserver 127.0.0.1:8000
+.venv/bin/python manage.py migrate
+.venv/bin/python manage.py provision demo owner --name "Demo workspace"
+.venv/bin/python manage.py runserver 127.0.0.1:8000
 ```
 
-In a second terminal, run `DS_DEV=1 .venv/bin/python manage.py work`. Open [the local dashboard](http://127.0.0.1:8000), sign in, and add a public repository you control. Once the worker has collected it, refresh the repository page and approve the first baseline. Local mode uses SQLite. Create an Infrastructure target to connect a customer-run collector using the [collector guide](docs/infrastructure.md).
+Terminal 2 processes scheduled scans. Open it in the checkout.
+
+```bash
+export DS_DEV=1
+.venv/bin/python manage.py work
+```
+
+### Linux (Bash)
+
+Terminal 1 starts the web app. Install Python 3.12+ and its venv support through your distribution if needed.
+
+```bash
+git clone --branch main https://github.com/SiddharthSoumya/DriftShield.git
+cd DriftShield
+python3 --version
+python3 -m venv .venv
+.venv/bin/python -m pip install -r requirements.txt
+export DS_DEV=1
+.venv/bin/python manage.py migrate
+.venv/bin/python manage.py provision demo owner --name "Demo workspace"
+.venv/bin/python manage.py runserver 127.0.0.1:8000
+```
+
+Terminal 2 processes scheduled scans. Open it in the checkout.
+
+```bash
+export DS_DEV=1
+.venv/bin/python manage.py work
+```
+
+### Run and verify your first scan
+
+1. Open [the local dashboard](http://127.0.0.1:8000) and sign in as `owner`.
+2. In **Repositories**, add a public `owner/repository` and open its monitor. Either use **Scan now** for a one-off collection in local development or let the running worker process the due scan. Local scan requests wait for GitHub to respond. Public scans require outbound HTTPS to `api.github.com`.
+3. After a successful scan, the monitor shows its observation time and **Needs baseline**. Review the returned settings, enter an approval reason, and select **Approve selected settings**.
+4. For **Waiting for worker**, start the second terminal and refresh the monitor. A recent worker check-in confirms the GitHub scan loop ran. For a failed collection, use the error and retry time on the monitor to diagnose GitHub access, a connection failure, or rate limiting. On a Linux service install, inspect `sudo journalctl -u driftshield-worker -n 100`.
+
+### Find your workflows
+
+| Workflow | Where to go |
+| --- | --- |
+| GitHub repository scans, drift and baseline history | **Repositories → repository monitor**. Live installations queue scans for the worker. |
+| AWS, Terraform/OpenTofu, Kubernetes or Docker collection | **Infrastructure → Add target**, then schedule a collector on a compatible runner. The [collector guide](docs/infrastructure.md) lists prerequisites, permissions and what is collected. The runner sends its observations over HTTPS. |
+| Infrastructure review, assignment, evidence and export | **Findings → select a finding**, or **Infrastructure → target → Evidence**. Actions depend on role, coverage and review state. |
+| AWS EBS runner enrollment, coverage gaps, independent confirmation, baseline approvals and protected evidence | In [dedicated EBS pilot](docs/pilot-acceptance.md) mode, use **AWS EBS → target**. Open **Coverage**, **Findings**, **Approvals**, or **Evidence** in the target navigation. This mode requires a dedicated deployment and the activation or staging gates. |
+| Alert delivery history, retention and mailbox probes in the EBS pilot | **Settings** as an owner. Live mailbox receipt and paging are verified outside DriftShield. |
+| Workspace actions | **Activity → Event details**. |
+
+Windows instructions above run the web app, GitHub scan worker and UI. For CLI-backed infrastructure collectors, use a compatible Linux or macOS runner with the appropriate platform CLI, or use a Linux runner under WSL. The loopback HTTP demo is for local UI and GitHub testing. Follow the HTTPS deployment guide to connect a real runner.
 
 ## Install on a Linux server
 
-You need systemd, Python 3.12+ with venv, PostgreSQL 16+, and an HTTPS origin served by a reverse proxy such as Caddy. Run the installer from a reviewed checkout:
+The service installer below is for Linux with systemd. You need Python 3.12+ with venv, PostgreSQL 16+, and an HTTPS origin served by a reverse proxy such as Caddy. Run the installer from a reviewed checkout:
 
 ```bash
 sudo bash deploy/install.sh
@@ -50,9 +126,28 @@ For private repositories, register a dedicated GitHub App with repository Metada
 
 ## Verify and operate
 
+### Windows (PowerShell)
+
+```powershell
+$env:DS_DEV = "1"
+.\.venv\Scripts\python.exe manage.py test governance
+.\.venv\Scripts\python.exe manage.py makemigrations --check --dry-run
+```
+
+Run the full collector suite from Linux, macOS, or WSL.
+
+### macOS (Terminal)
+
 ```bash
-DS_DEV=1 python manage.py test
-DS_DEV=1 python manage.py makemigrations --check --dry-run
+DS_DEV=1 .venv/bin/python manage.py test
+DS_DEV=1 .venv/bin/python manage.py makemigrations --check --dry-run
+```
+
+### Linux (Bash)
+
+```bash
+DS_DEV=1 .venv/bin/python manage.py test
+DS_DEV=1 .venv/bin/python manage.py makemigrations --check --dry-run
 for script in deploy/install.sh deploy/service-launch deploy/driftshieldctl; do bash -n "$script"; done
 sudo systemctl status driftshield-web driftshield-worker
 ```

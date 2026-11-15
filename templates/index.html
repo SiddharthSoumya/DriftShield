@@ -2,7 +2,7 @@
 {% block title %}Workspaces · DriftShield{% endblock %}
 {% block content %}
 <h1>Workspaces</h1>
-<div class="panel">
+<div class="panel pad">
   {% for membership in memberships %}
     <p><a href="{% url 'overview' membership.workspace.slug %}">{{ membership.workspace.name }}</a> <span class="pill muted">{{ membership.get_role_display }}</span></p>
   {% empty %}

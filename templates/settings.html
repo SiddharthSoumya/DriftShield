@@ -1,36 +1,55 @@
 {% extends "base.html" %}
 {% block title %}Workspace settings · DriftShield{% endblock %}
 {% block content %}
-<div class="page-head"><div><p class="crumb">{{ workspace.name }}</p><h1>Workspace settings</h1><p>Manage alert routing, evidence retention, and review access.</p></div></div>
-<div class="split">
-  <section class="panel pad"><h2>Alerts and retention</h2>
-    <p>{% if smtp %}SMTP is configured. Use a team mailbox for delivery.{% else %}Ask your server administrator to configure SMTP before enabling email delivery.{% endif %}</p>
-    <form method="post" class="stack">{% csrf_token %}
-      <label for="recipient">Alert email</label><input id="recipient" name="recipient" type="email" value="{{ workspace.recipient }}" maxlength="254">
+<div class="page-head"><div><h1>Workspace settings</h1><p>Manage alerts, evidence retention, and workspace access.</p></div></div>
+<nav class="section-nav" aria-label="Settings sections">
+  <a href="#alerts">Alerts</a><a href="#retention-policy">Evidence retention</a><a href="#access">Members</a>
+  {% if not pilot_enabled %}<a href="#repository-policies">GitHub</a>{% endif %}<a href="#delivery">Delivery history</a>
+</nav>
+<div class="settings-grid">
+  <form method="post" aria-label="Workspace preferences">{% csrf_token %}
+    <section class="panel pad stack" id="alerts">
+      <div class="heading-row"><h2>Alert routing</h2>
+        {% if smtp %}<span class="pill good">SMTP configured</span>{% else %}<span class="pill muted">SMTP unavailable</span>{% endif %}
+      </div>
+      <p>{% if smtp %}Use a team mailbox for delivery.{% else %}Ask your server administrator to configure SMTP before enabling email delivery.{% endif %}</p>
+      <div><label for="recipient">Alert email</label><input id="recipient" name="recipient" type="email" value="{{ workspace.recipient }}" maxlength="254"></div>
       <label class="check"><input type="checkbox" name="infra_high_only" value="1" {% if workspace.infra_high_priority_only %}checked{% endif %}> Email only high-priority infrastructure drift findings</label>
-      <label for="retention">Evidence retention in days</label><input id="retention" name="retention" type="number" min="7" max="365" value="{{ workspace.retention_days }}" required>
-      <label class="check"><input type="checkbox" name="digest" value="1" {% if workspace.digest_weekly %}checked{% endif %}> Email weekly workspace summary</label>
+      {% if not pilot_enabled %}<label class="check"><input type="checkbox" name="digest" value="1" {% if workspace.digest_weekly %}checked{% endif %}> Email weekly workspace summary</label>{% endif %}
+    </section>
+    <section class="panel pad stack" id="retention-policy">
+      <h2>Evidence retention</h2>
+      <div><label for="retention">Retention in days</label><input id="retention" name="retention" type="number" min="7" max="365" value="{{ workspace.retention_days }}" required></div>
+    </section>
+    {% if not pilot_enabled %}
+    <section class="panel pad stack" id="repository-policies">
       <h2>Repository policies</h2>
-      <p>Evaluated against the next successful observation. Review and signature policies use active rulesets.</p>
+      <p>Evaluated on the next successful GitHub scan. Review and signature policies use active rulesets.</p>
       <label class="check"><input type="checkbox" name="private" value="1" {% if workspace.require_private %}checked{% endif %}> Flag public repositories</label>
-      <label for="reviews">Minimum pull-request approvals (0 disables)</label><input id="reviews" name="reviews" type="number" min="0" max="10" value="{{ workspace.min_reviews }}" required>
+      <div><label for="reviews">Minimum pull-request approvals</label><input id="reviews" name="reviews" type="number" min="0" max="10" value="{{ workspace.min_reviews }}" required><small>Use 0 to disable the approvals requirement.</small></div>
       <label class="check"><input type="checkbox" name="signatures" value="1" {% if workspace.require_signatures %}checked{% endif %}> Require signed commits</label>
-      <div class="actions"><button class="primary">Save settings</button>{% if smtp %}<button name="test" value="1">Save and send test email</button>{% endif %}</div>
-    </form>
-  </section>
-  <section class="panel pad"><h2>GitHub App</h2>
-    {% if integration %}<p>Connected to <strong>{{ integration.account }}</strong>. Select repository access on GitHub and import from the overview.</p>{% else %}<p>Your server administrator can connect a GitHub App to monitor private repositories.</p>{% endif %}
-    <h2>Members</h2>
-    <ul class="activity">{% for entry in members %}<li><strong>{{ entry.user.username }}</strong><span class="pill muted">{{ entry.get_role_display }}</span></li>{% endfor %}</ul>
-  </section>
+    </section>
+    {% endif %}
+    <div class="actions"><button class="primary">Save settings</button>{% if smtp %}<button name="test" value="1">Save and send test email</button>{% endif %}</div>
+  </form>
+  <div>
+    <section class="panel" id="access"><div class="section-head"><h2>Members</h2></div>
+      <ul class="activity">{% for entry in members %}<li><strong>{{ entry.user.username }}</strong><span class="pill muted">{{ entry.get_role_display }}</span></li>{% endfor %}</ul>
+      <p class="footnote">A server operator manages workspace membership from the server CLI.</p>
+    </section>
+    {% if not pilot_enabled %}
+    <section class="panel pad"><h2>GitHub App</h2>
+      {% if integration %}<p>Connected to <strong>{{ integration.account }}</strong>. Select repository access on GitHub, then <a href="{% url 'overview' workspace.slug %}#add-repository">import repositories</a>.</p>{% else %}<p>Your server administrator can connect a GitHub App to monitor private repositories.</p>{% endif %}
+    </section>
+    {% else %}
+    <section class="panel pad"><h2>Mailbox verification</h2>
+      {% if latest_canary %}<p>Latest probe {{ latest_canary.canary_slot|date:"M j, H:i T" }} · {% if latest_canary.sent_at %}Accepted by relay{% elif latest_canary.disposition %}{{ latest_canary.get_disposition_display }}{% elif latest_canary.failed_at %}Delivery failed{% else %}Queued{% endif %}.</p>{% else %}<p>No mailbox probe queued.</p>{% endif %}
+      <p>Check actual receipt and paging in the independent customer monitor.</p>
+    </section>
+    {% endif %}
+  </div>
 </div>
-{% if pilot_enabled %}
-<section class="panel pad"><h2>Mailbox verification</h2>
-{% if latest_canary %}<p>Latest probe {{ latest_canary.canary_slot|date:"M j, H:i T" }} · {% if latest_canary.sent_at %}Accepted by relay{% elif latest_canary.disposition %}{{ latest_canary.get_disposition_display }}{% elif latest_canary.failed_at %}Delivery failed{% else %}Queued{% endif %}.</p>{% else %}<p>No mailbox probe queued.</p>{% endif %}
-<p>Check actual receipt in the independent customer monitor.</p>
-</section>
-{% endif %}
-<section class="panel"><div class="section-head"><h2>Recent email deliveries</h2></div>
+<section class="panel" id="delivery"><div class="section-head"><h2>Recent email deliveries</h2></div>
   <ul class="activity">{% for item in deliveries %}<li><div><strong>{{ item.subject }}</strong><small>{{ item.created_at|date:"M j, H:i T" }} · {{ item.attempts }} attempts</small></div>
     <span class="pill {% if item.failed_at %}danger{% elif item.sent_at %}good{% else %}warning{% endif %}">{% if item.disposition %}{{ item.get_disposition_display }}{% elif item.failed_at %}Failed{% elif item.sent_at %}Accepted by SMTP{% else %}Queued{% endif %}</span>
   </li>{% empty %}<li>No email deliveries recorded.</li>{% endfor %}</ul>

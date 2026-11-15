@@ -2,23 +2,34 @@
 {% block title %}{{ monitor.full_name }} · DriftShield{% endblock %}
 {% block content %}
 <div class="page-head">
-  <div><a class="crumb" href="{% url 'overview' workspace.slug %}">← Repositories</a><h1>{{ monitor.full_name }}</h1><p><span class="pill {{ monitor.tone }}">{{ monitor.state }}</span> · {% if monitor.app_managed %}GitHub App{% else %}Public API{% endif %} · {{ monitor.interval_minutes }} minute cadence</p></div>
+  <div><a class="crumb" href="{% url 'overview' workspace.slug %}">Repositories / Monitor</a><h1>{{ monitor.full_name }}</h1><p><span class="pill {{ monitor.tone }}">{{ monitor.state }}</span> · {% if monitor.app_managed %}GitHub App{% else %}Public API{% endif %} · {{ monitor.interval_minutes }} minute cadence</p></div>
   {% if member.role != "viewer" %}<form method="post" action="{% url 'monitor_action' workspace.slug monitor.pk %}" class="actions">{% csrf_token %}
-    {% if monitor.paused %}<button name="action" value="resume">Resume scans</button>{% else %}<button name="action" value="pause">Pause</button><button class="primary" name="action" value="scan">Queue scan</button>{% endif %}
+    {% if monitor.paused %}<button name="action" value="resume">Resume scans</button>{% else %}<button name="action" value="pause">Pause</button><button class="primary" name="action" value="scan">{% if local_scan %}Scan now{% else %}Queue scan{% endif %}</button>{% endif %}
   </form>{% endif %}
 </div>
-{% if monitor.last_error %}<p class="notice error" role="status">{{ monitor.last_error }} Last good observation remains visible below.</p>{% endif %}
-<div class="metrics three">
-  <div class="metric"><span>Last successful scan</span><strong class="compact">{{ monitor.last_success|date:"M j, H:i T"|default:"Pending" }}</strong></div>
+<nav class="section-nav" aria-label="Repository sections">
+  <a href="#scan-status">Scan status</a><a href="#configuration">Configuration</a>
+  <a href="#incidents">Incidents</a><a href="#scan-history">Scan history</a><a href="#baseline-history">Baselines</a>
+</nav>
+{% if monitor.last_error %}<p class="notice error" role="status">{{ monitor.last_error }} {% if monitor.last_success %}The last good observation remains visible below.{% endif %}</p>{% endif %}
+<section class="metrics" id="scan-status" aria-label="Scan status">
+  <div class="metric"><span>Scan status</span><p class="metric-status"><span class="pill {{ monitor.scan_tone }}">{{ monitor.scan_state }}</span></p><small>Last attempt {{ monitor.last_attempt|date:"M j, H:i T"|default:"not started" }}</small></div>
+  <div class="metric"><span>Last successful scan</span><strong class="compact">{{ monitor.last_success|date:"M j, H:i T"|default:"No successful scan" }}</strong></div>
   <div class="metric"><span>Next scheduled attempt</span><strong class="compact">{% if monitor.paused %}Paused{% else %}{{ monitor.next_scan|date:"M j, H:i T" }}{% endif %}</strong></div>
-  <div class="metric"><span>Approved baseline</span><strong class="compact">{% if monitor.baseline_version %}Version {{ monitor.baseline_version }}{% else %}Pending{% endif %}</strong></div>
-</div>
-<section class="panel">
+  <div class="metric"><span>Approved baseline</span><strong class="compact">{% if monitor.baseline_version %}Version {{ monitor.baseline_version }}{% else %}Not approved{% endif %}</strong></div>
+</section>
+{% if not github_worker.healthy or not monitor.last_success %}
+  {% include "includes/github_worker.html" %}
+{% endif %}
+<section class="panel" id="configuration">
   <div class="section-head"><h2>Configuration comparison</h2></div>
+  {% if not monitor.last_success %}
+  <div class="empty"><h3>Waiting for the first successful scan</h3><p>Once a scan succeeds, review the observed GitHub settings here and approve the initial baseline.</p></div>
+  {% else %}
   <form method="post" action="{% url 'monitor_action' workspace.slug monitor.pk %}">{% csrf_token %}
     <input type="hidden" name="revision" value="{{ monitor.revision }}">
     <input type="hidden" name="version" value="{{ monitor.baseline_version }}">
-    <div class="table-wrap"><table>
+    <div class="table-wrap" tabindex="0" role="region" aria-label="Configuration comparison"><table>
       <thead><tr><th scope="col">Setting</th><th scope="col">Approved</th><th scope="col">Last observed</th>{% if can_approve and member.role != 'viewer' %}<th scope="col">Approve</th>{% endif %}</tr></thead>
       <tbody>{% for row in rows %}<tr>
         <th scope="row">{{ row.label }} {% if row.changed and monitor.baseline_version %}<span class="pill danger">Changed</span>{% endif %}</th>
@@ -31,9 +42,10 @@
     <button name="action" value="approve" class="primary">Approve selected settings</button></div>
     {% endif %}
   </form>
+  {% endif %}
   <p class="footnote">Rule coverage includes active rulesets returned by GitHub for the default branch. Classic branch protection, bypass configuration, and inactive rulesets are outside this view.</p>
 </section>
-<section class="panel">
+<section class="panel" id="incidents">
   <div class="section-head"><h2>Incidents</h2></div>
   <ul class="activity">{% for incident in incidents %}<li>
     <div><strong>{{ incident.label }}</strong> <span class="pill {% if incident.closed_at %}muted{% else %}danger{% endif %}">{{ incident.severity|capfirst }}</span>
@@ -45,10 +57,10 @@
   </li>{% empty %}<li>No incidents recorded.</li>{% endfor %}</ul>
 </section>
 <div class="split">
-  <section class="panel"><div class="section-head"><h2>Recent scans</h2></div>
+  <section class="panel" id="scan-history"><div class="section-head"><h2>Recent scans</h2></div>
     <ul class="activity">{% for scan in scans %}<li><div><strong>{{ scan.label }}</strong><small>{{ scan.collected_at|date:"M j, H:i T" }}{% if scan.error %} · {{ scan.error }}{% endif %}</small></div></li>{% empty %}<li>Waiting for the first scan.</li>{% endfor %}</ul>
   </section>
-  <section class="panel"><div class="section-head"><h2>Baseline versions</h2></div>
+  <section class="panel" id="baseline-history"><div class="section-head"><h2>Baseline versions</h2></div>
     <ul class="activity">{% for version in versions %}<li><details><summary>Version {{ version.version }} · {{ version.actor }}</summary><p>{{ version.reason }}</p><pre>{{ version.formatted }}</pre></details></li>{% empty %}<li>No baseline approved.</li>{% endfor %}</ul>
   </section>
 </div>

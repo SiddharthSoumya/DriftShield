@@ -36,6 +36,11 @@ def scan_one(github):
     monitor = claim(Monitor.objects.filter(paused=False, next_scan__lte=timezone.now()).order_by("next_scan", "id"))
     if not monitor:
         return False
+    scan_claimed(github, monitor)
+    return True
+
+
+def scan_claimed(github, monitor):
     try:
         snapshot = github.snapshot(monitor)
     except CollectionError as error:
@@ -44,10 +49,10 @@ def scan_one(github):
     else:
         failure = None
     try:
-        complete_scan(monitor.pk, monitor.lease, snapshot=snapshot, error=failure)
+        return complete_scan(monitor.pk, monitor.lease, snapshot=snapshot, error=failure)
     except (Monitor.DoesNotExist, Workspace.DoesNotExist):
         logger.info("Monitor %s was removed during collection", monitor.pk)
-    return True
+        return False
 
 
 def deliver_one():

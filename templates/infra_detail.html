@@ -1,8 +1,13 @@
 {% extends "base.html" %}
 {% block title %}{{ target.name }} · DriftShield{% endblock %}
 {% block content %}
-<div class="page-head"><div><a class="crumb" href="{% url 'infra' workspace.slug %}">← Infrastructure</a>
+<div class="page-head"><div><a class="crumb" href="{% url 'infra' workspace.slug %}">{% if pilot %}AWS EBS{% else %}Infrastructure{% endif %} / Target</a>
 <h1>{{ target.name }}</h1><p>{{ target.get_platform_display }} · {{ target.scope }} · <span class="pill {{ target.tone }}">{{ target.label }}</span></p></div></div>
+<nav class="section-nav" aria-label="Target sections">
+  <a href="#coverage">Coverage</a><a href="#findings">Findings</a>
+  <a href="#baselines">{% if pilot %}Approvals{% else %}Baselines{% endif %}</a><a href="#evidence">Evidence</a>
+  {% if member.role == "owner" and not pilot %}<a href="#collector">Collector</a>{% endif %}
+</nav>
 {% if target.last_error and not pilot %}<p class="notice error" role="status">Collector reported {{ target.last_error }}. The last successful observation remains available.</p>{% endif %}
 <div class="metrics three">
 <div class="metric"><span>Last successful observation</span><strong class="compact">{{ target.last_success|date:"M j, H:i T"|default:"Pending" }}</strong></div>
@@ -21,17 +26,17 @@
 <button name="action" value="approve" class="primary">Approve baseline</button>
 </form></section>
 {% endif %}
-<section class="panel pad"><h2>Findings and remediation</h2><p>{{ guidance }}</p>
+<section class="panel pad" id="findings"><h2>Findings and remediation</h2><p>{{ guidance }}</p>
 {% if target.runbook_url %}<p><a href="{{ target.runbook_url }}" rel="noreferrer">Open team runbook</a></p>{% endif %}
 {% if not active %}<p>No open findings.</p>{% endif %}
 {% for finding in active %}
-<article class="panel pad" id="finding-{{ finding.pk }}">
+<article class="finding-card" id="finding-{{ finding.pk }}">
 <h3>{{ finding.resource }}</h3>
 <p><span class="pill {% if finding.priority == 'high' %}danger{% else %}warning{% endif %}">{{ finding.priority|capfirst }} priority</span> · {{ finding.count }} observations · {{ finding.owner.username|default:"Unassigned" }}
 {% if finding.suppressed %} · <span class="pill warning">Excepted</span>{% endif %}</p>
 <div class="split"><div><h4>Approved</h4><pre>{{ finding.expected_text }}</pre></div><div><h4>Observed</h4><pre>{{ finding.actual_text }}</pre></div></div>
 {% if finding.changes %}
-<div class="table-wrap"><table><thead><tr><th scope="col">Changed field</th><th scope="col">Approved</th><th scope="col">Observed</th></tr></thead>
+<div class="table-wrap" tabindex="0" role="region" aria-label="Changed fields"><table><thead><tr><th scope="col">Changed field</th><th scope="col">Approved</th><th scope="col">Observed</th></tr></thead>
 <tbody>{% for change in finding.changes %}<tr><td>{{ change.field }}</td><td>{% if change.expected_present %}{{ change.expected }}{% else %}Absent{% endif %}</td><td>{% if change.observed_present %}{{ change.observed }}{% else %}Absent{% endif %}</td></tr>{% endfor %}</tbody></table></div>
 {% endif %}
 {% if finding.observation_changed and not pilot %}<p>Waiting for a post-review observation to verify the change.</p>{% endif %}
@@ -68,10 +73,11 @@
 </article>
 {% endfor %}
 </section>
-<section class="panel pad"><h2>Last successful observation</h2>
+<section class="panel pad"{% if not pilot %} id="coverage"{% endif %}><h2>Last successful observation</h2>
 {% if target.last_success %}
 <details><summary>View {{ target.latest|length }} records</summary><pre>{{ snapshot_text }}</pre></details>
-{% else %}<p>Waiting for the collector.</p>{% endif %}
+{% else %}<p>Waiting for the collector to submit its first observation.</p>
+<a href="https://github.com/SiddharthSoumya/DriftShield/blob/main/{% if pilot %}docs/pilot-acceptance.md{% else %}docs/infrastructure.md{% endif %}">Open collector setup guide</a>{% endif %}
 </section>
 <div class="split">
 <section class="panel pad"><h2>Recent observations</h2><ul class="activity">{% for observation in observations %}<li>{{ observation.received_at|date:"M j, H:i T" }} · {{ observation.status }}{% if observation.failure_code %} · {{ observation.failure_code }}{% endif %}</li>{% empty %}<li>No deliveries recorded.</li>{% endfor %}</ul></section>
@@ -79,14 +85,14 @@
 <p>{{ finding.reason }}{% if finding.closure_delivery_id %} · Observation {{ finding.closure_delivery.identifier }} · Evidence {{ finding.closure_event_id }}{% endif %}</p><div class="split"><div><h4>Approved</h4><pre>{{ finding.expected|pprint }}</pre></div><div><h4>Observed</h4><pre>{{ finding.actual|pprint }}</pre></div></div>
 </details></li>{% empty %}<li>No resolved findings.</li>{% endfor %}</ul></section>
 </div>
-<section class="panel pad"><h2>Baseline history</h2><ul class="activity">{% for version in versions %}<li>Version {{ version.version }} · {{ version.actor }} · {{ version.reason }}{% if version.pilot_approval_id %} · Approved {{ version.pilot_approval.decided_at|date:"M j, H:i T" }}{% endif %}</li>{% empty %}<li>No approved baselines.</li>{% endfor %}</ul></section>
+<section class="panel pad"{% if not pilot %} id="baselines"{% endif %}><h2>Baseline history</h2><ul class="activity">{% for version in versions %}<li>Version {{ version.version }} · {{ version.actor }} · {{ version.reason }}{% if version.pilot_approval_id %} · Approved {{ version.pilot_approval.decided_at|date:"M j, H:i T" }}{% endif %}</li>{% empty %}<li>No approved baselines.</li>{% endfor %}</ul></section>
 {% if not pilot %}<section class="panel pad"><h2>Current exceptions</h2>
 <ul class="activity">{% for exception in exceptions %}<li><strong>{{ exception.resource }} · {{ exception.field }}</strong>
 <small>{{ exception.expected }} → {{ exception.observed }} · Expires {{ exception.expires_at|date:"M j, H:i T" }} · {{ exception.reason }}</small>
 {% if member.role == "owner" %}<form method="post" action="{% url 'infra_action' workspace.slug target.pk %}">{% csrf_token %}
 <input type="hidden" name="exception" value="{{ exception.pk }}"><button name="action" value="end_exception">End exception</button></form>{% endif %}</li>
 {% empty %}<li>No current exceptions.</li>{% endfor %}</ul></section>{% endif %}
-<section class="panel pad"><h2>Evidence timeline</h2>{% if pilot and member.role == "owner" %}<p><a href="{% url 'pilot_evidence' workspace.slug target.pk %}">Download evidence bundle</a></p>{% endif %}<a class="button" href="{% url 'infra_timeline' workspace.slug target.pk %}">Export timeline CSV{% if pilot %} (latest 10,000){% endif %}</a>
+<section class="panel pad" id="evidence"><h2>Evidence timeline</h2>{% if pilot and member.role == "owner" %}<p><a href="{% url 'pilot_evidence' workspace.slug target.pk %}">Download evidence bundle</a></p>{% endif %}<a class="button" href="{% url 'infra_timeline' workspace.slug target.pk %}">Export timeline CSV{% if pilot %} (latest 10,000){% endif %}</a>
 <ul class="activity">{% for event in events %}<li><details><summary>{{ event.label }}{% if event.resource %} · {{ event.resource }}{% endif %}</summary><small>{{ event.actor }} · {{ event.created_at|date:"M j, H:i T" }}</small><pre>{{ event.formatted }}</pre></details></li>
 {% empty %}<li>No timeline events recorded.</li>{% endfor %}</ul></section>
 {% if member.role == "owner" and not pilot %}
@@ -94,7 +100,7 @@
 <form method="post" class="inline" action="{% url 'infra_action' workspace.slug target.pk %}">{% csrf_token %}
 <div><label for="runbook-url">HTTPS runbook URL</label><input name="url" id="runbook-url" type="url" maxlength="500" value="{{ target.runbook_url }}"></div>
 <button name="action" value="runbook">Save runbook link</button></form></section>
-<section class="panel pad"><h2>Collector</h2><pre>{{ endpoint }}</pre>
+<section class="panel pad" id="collector"><h2>Collector</h2><pre>{{ endpoint }}</pre>
 {% if target.source_id %}<p>Observed source ID <code>{{ target.source_id }}</code></p>{% else %}<p>No source identity has been recorded.</p>{% endif %}
 {% if target.token_expires_at %}<p>Credential expires {{ target.token_expires_at|date:"M j, Y H:i T" }}.</p>{% else %}<p>Collector credential revoked.</p>{% endif %}
 <form method="post" action="{% url 'infra_action' workspace.slug target.pk %}" class="inline">{% csrf_token %}

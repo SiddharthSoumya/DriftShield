@@ -1,0 +1,23 @@
+<section class="panel worker-panel" aria-labelledby="github-worker-title">
+  <div class="section-head">
+    <h2 id="github-worker-title">GitHub scan worker</h2>
+    {% if github_worker.healthy %}<span class="pill good">Recent check-in</span>
+    {% elif github_worker.heartbeat %}<span class="pill warning">Check-in overdue</span>
+    {% else %}<span class="pill warning">No check-in yet</span>{% endif %}
+  </div>
+  <div class="panel-body">
+    {% if github_worker.heartbeat %}<p>Last check-in <time datetime="{{ github_worker.heartbeat|date:'c' }}">{{ github_worker.heartbeat|date:"M j, H:i:s T" }}</time>.</p>{% endif %}
+    {% if not github_worker.healthy %}
+    <p>Scheduled scans need the background worker. Start it in a second terminal using the same settings and database as the web app.</p>
+    {% if local_scan %}<p>For a one-off scan here, use <strong>Scan now</strong>.</p>{% endif %}
+    <details><summary>Worker commands</summary>
+      <p>Windows PowerShell from the project folder</p><pre>$env:DS_DEV = "1"
+.\.venv\Scripts\python.exe manage.py work</pre>
+      <p>macOS or Linux local development from the project folder</p><pre>DS_DEV=1 .venv/bin/python manage.py work</pre>
+      <p>Installed Linux service</p><pre>sudo systemctl status driftshield-worker
+sudo journalctl -u driftshield-worker -n 100</pre>
+    </details>
+    {% endif %}
+    {% if member.role == "owner" %}<a href="{% url 'worker_health' workspace.slug %}">Worker diagnostics (JSON)</a>{% endif %}
+  </div>
+</section>
