@@ -8,27 +8,44 @@
 </head>
 <body>
 <a href="#content" class="skip">Skip to content</a>
-<header class="header">
-  <div class="header-inner">
-    <a class="brand" href="{% url 'index' %}"><span class="mark" aria-hidden="true">◆</span> DriftShield</a>
+{% with route=request.resolver_match.url_name %}
+<div class="shell{% if not workspace %} public-shell{% endif %}">
+  <aside class="sidebar" aria-label="DriftShield">
+    <a class="brand" href="{% url 'index' %}"><span class="mark" aria-hidden="true"></span>DriftShield</a>
     {% if workspace %}
-      <nav aria-label="Workspace">
-        <a href="{% url 'overview' workspace.slug %}">Overview</a>
-        <a href="{% url 'infra' workspace.slug %}">Infrastructure</a>
-        <a href="{% url 'audit' workspace.slug %}">Activity</a>
-        {% if member.role == 'owner' %}<a href="{% url 'settings' workspace.slug %}">Settings</a>{% endif %}
-      </nav>
+    <nav class="sidebar-nav" aria-label="Workspace">
+      <div class="nav-group">
+        <p>Monitoring</p>
+        {% if not ebs_pilot_mode %}
+        <a class="nav-link" href="{% url 'overview' workspace.slug %}"{% if route == 'overview' or route == 'monitor' %} aria-current="{% if route == 'overview' %}page{% else %}true{% endif %}"{% endif %}><span class="nav-icon" aria-hidden="true">▤</span>Repositories</a>
+        {% endif %}
+        <a class="nav-link" href="{% url 'infra' workspace.slug %}"{% if route == 'infra' or route == 'infra_detail' or route == 'infra_add' or route == 'infra_action' %} aria-current="{% if route == 'infra' %}page{% else %}true{% endif %}"{% endif %}><span class="nav-icon" aria-hidden="true">◈</span>{% if ebs_pilot_mode %}AWS EBS{% else %}Infrastructure{% endif %}</a>
+        <a class="nav-link" href="{% url 'infra_inbox' workspace.slug %}"{% if route == 'infra_inbox' %} aria-current="page"{% endif %}><span class="nav-icon" aria-hidden="true">≡</span>Findings</a>
+      </div>
+      <div class="nav-group">
+        <p>Workspace</p>
+        <a class="nav-link" href="{% url 'audit' workspace.slug %}"{% if route == 'audit' %} aria-current="page"{% endif %}><span class="nav-icon" aria-hidden="true">◷</span>Activity</a>
+        {% if member.role == 'owner' %}<a class="nav-link" href="{% url 'settings' workspace.slug %}"{% if route == 'settings' %} aria-current="page"{% endif %}><span class="nav-icon" aria-hidden="true">⚙</span>Settings</a>{% endif %}
+      </div>
+    </nav>
+    <a class="nav-help" href="https://github.com/SiddharthSoumya/DriftShield/blob/main/{% if ebs_pilot_mode %}docs/pilot-acceptance.md{% else %}README.md#try-it-locally{% endif %}">Setup guide <span aria-hidden="true">↗</span></a>
     {% endif %}
+  </aside>
+  <div class="main-column">
     {% if user.is_authenticated %}
+    <header class="topbar">
+      {% if workspace %}<p><span class="workspace-mark" aria-hidden="true"></span>{{ workspace.name }}</p>{% endif %}
       <form method="post" action="{% url 'logout' %}" class="session">{% csrf_token %}
-        <span>{{ user.username }}</span><button class="ghost">Sign out</button>
+        <span>{{ user.username }}</span><button type="submit">Sign out</button>
       </form>
+    </header>
     {% endif %}
+    <main id="content" class="container">
+      {% for message in messages %}<p class="notice {{ message.tags }}" role="status">{{ message }}</p>{% endfor %}
+      {% block content %}{% endblock %}
+    </main>
   </div>
-</header>
-<main id="content" class="container">
-  {% for message in messages %}<p class="notice {{ message.tags }}" role="status">{{ message }}</p>{% endfor %}
-  {% block content %}{% endblock %}
-</main>
+</div>
+{% endwith %}
 </body>
 </html>

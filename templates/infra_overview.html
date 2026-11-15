@@ -1,20 +1,49 @@
 {% extends "base.html" %}
 {% block title %}Infrastructure · DriftShield{% endblock %}
 {% block content %}
-<div class="page-head"><div><p class="crumb">{{ workspace.name }}</p><h1>Infrastructure drift</h1><p>Monitor approved configurations across cloud accounts, clusters, and runtime environments.</p></div>
-<div class="actions"><a class="button primary" href="{% url 'infra_inbox' workspace.slug %}">Open findings queue</a><a class="button" href="{% url 'infra_evidence' workspace.slug %}">Export findings CSV</a></div></div>
-{% if pilot_enabled %}<p><a href="{% url 'infra' workspace.slug %}{% if not archived %}?archived=1{% endif %}">{% if archived %}View active targets{% else %}View retired targets{% endif %}</a></p>{% endif %}
+<div class="page-head">
+  <div><h1>{% if pilot_enabled %}AWS EBS monitoring{% else %}Infrastructure{% endif %}</h1>
+  <p>{% if pilot_enabled %}Track collection coverage and volume drift for the enrolled AWS account and region.{% else %}Track configuration drift across cloud accounts, clusters, and runtime environments.{% endif %}</p></div>
+  <div class="actions">
+    <a class="button" href="{% url 'infra_evidence' workspace.slug %}">Export findings CSV</a>
+    {% if member.role == "owner" and not archived and not pilot_fenced %}<a class="button primary" href="#add-target">Add target</a>{% endif %}
+  </div>
+</div>
+<nav class="section-nav" aria-label="Infrastructure sections">
+  <a href="{% url 'infra' workspace.slug %}"{% if not archived %} aria-current="page"{% endif %}>Active targets</a>
+  {% if pilot_enabled %}<a href="{% url 'infra' workspace.slug %}?archived=1"{% if archived %} aria-current="page"{% endif %}>Retired targets</a>{% endif %}
+  <a href="{% url 'infra_inbox' workspace.slug %}">Findings queue</a>
+</nav>
+{% if pilot_fenced %}<p class="notice warning" role="status">Pilot writes are fenced. A server operator must complete the activation or recovery gates before targets can be changed.</p>{% endif %}
+<section class="metrics three" aria-label="Infrastructure metrics">
+  <div class="metric"><span>{% if archived %}Retired targets{% else %}Active targets{% endif %}</span><strong>{{ targets|length }}</strong></div>
+  <div class="metric metric-warning"><span>Need attention</span><strong>{{ target_attention_count }}</strong><small>Targets with coverage or configuration issues</small></div>
+  <div class="metric metric-danger"><span>Open findings</span><strong>{{ target_open_count }}</strong><small>Findings requiring review</small></div>
+</section>
 <section class="panel">
-  <div class="section-head"><h2>Targets</h2><span class="muted-text">{{ targets|length }} connected scopes</span></div>
+  <div class="section-head"><h2>{% if archived %}Retired targets{% else %}Monitored targets{% endif %}</h2></div>
   {% if targets %}
-  <div class="table-wrap"><table><thead><tr><th>Target</th><th>Coverage</th><th>Status</th><th>Open findings</th><th>Last complete observation</th></tr></thead>
+  <div class="table-wrap" tabindex="0" role="region" aria-label="Monitored targets"><table><thead><tr><th scope="col">Target</th><th scope="col">Platform</th><th scope="col">Status</th><th scope="col">Open findings</th><th scope="col">{% if pilot_enabled %}Last complete observation{% else %}Last successful observation{% endif %}</th></tr></thead>
   <tbody>{% for target in targets %}<tr><td><a href="{% url 'infra_detail' workspace.slug target.pk %}">{{ target.name }}</a><small>{{ target.scope }}</small></td>
   <td>{{ target.get_platform_display }}</td><td><span class="pill {{ target.tone }}">{{ target.label }}</span></td><td>{{ target.open_count }}{% if target.suppressed_count %}<small>{{ target.suppressed_count }} excepted</small>{% endif %}</td>
   <td>{{ target.last_success|date:"M j, H:i T"|default:"Pending" }}{% if target.profile == "ebs_pilot" %}<small>Last contact {{ target.last_contact_at|date:"M j, H:i T"|default:"Pending" }}</small>{% endif %}</td></tr>{% endfor %}</tbody></table></div>
-  {% else %}<p class="empty">Add an infrastructure target and send its first observation from a trusted collector.</p>{% endif %}
+  {% else %}
+  <div class="empty">
+    {% if archived %}<h3>No retired targets</h3><p>Retired targets are listed here for evidence access.</p>
+    {% else %}<h3>No infrastructure targets</h3>
+      <p>{% if member.role != "owner" %}A workspace owner can add and connect a target.{% else %}Add a target to define what to monitor. An infrastructure collector in your environment sends observations to this target.{% endif %}</p>
+      <ol class="steps">
+        <li>{% if pilot_enabled %}Add the AWS account and region, then enroll its read-only runner.{% else %}Choose a platform and enter its scope.{% endif %}</li>
+        <li>Configure and schedule the collector on its runner host, then check this target for its first observation.</li>
+        <li>{% if pilot_enabled %}Request and approve the first baseline with two named users.{% else %}Review the first observation and approve a baseline where required.{% endif %}</li>
+      </ol>
+      <a href="https://github.com/SiddharthSoumya/DriftShield/blob/main/{% if pilot_enabled %}docs/pilot-acceptance.md{% else %}docs/infrastructure.md{% endif %}">Open collector setup guide</a>
+    {% endif %}
+  </div>
+  {% endif %}
 </section>
 {% if member.role == "owner" and not archived and not pilot_fenced %}
-<section class="panel pad"><h2>Add infrastructure target</h2>
+<section class="panel pad" id="add-target"><h2>Add infrastructure target</h2><p>Cadence is how often DriftShield expects observations from your collector.</p>
   <form class="inline" method="post" action="{% url 'infra_add' workspace.slug %}">{% csrf_token %}
     <div><label for="name">Target name</label><input name="name" id="name" required maxlength="64" placeholder="production-us-east"></div>
     {% if pilot_enabled %}

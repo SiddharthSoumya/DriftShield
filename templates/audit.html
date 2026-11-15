@@ -1,10 +1,19 @@
 {% extends "base.html" %}
 {% block title %}Workspace activity · DriftShield{% endblock %}
 {% block content %}
-<div class="page-head"><div><p class="crumb">{{ workspace.name }}</p><h1>Workspace activity</h1><p>Review the latest 100 recorded actions.</p></div></div>
-<section class="panel"><ul class="activity">
-  {% for entry in entries %}
-  <li><details><summary>{{ entry.label }}{% if entry.monitor %} · {{ entry.monitor.full_name }}{% endif %}</summary><small>{{ entry.actor }} · {{ entry.created_at|date:"M j, H:i T" }}</small><pre>{{ entry.formatted }}</pre></details></li>
-  {% empty %}<li>No workspace activity yet.</li>{% endfor %}
-</ul></section>
+<div class="page-head"><div><h1>Workspace activity</h1><p>Review the latest 100 recorded actions.</p></div></div>
+<section class="panel">
+  <div class="section-head"><h2>Audit timeline</h2></div>
+  <ol class="activity audit-list">
+    {% for entry in entries %}
+    <li>
+      <div><strong>{{ entry.label }}</strong>
+        <small>{{ entry.actor }}{% if entry.monitor %} · <a href="{% url 'monitor' workspace.slug entry.monitor_id %}">{{ entry.monitor.full_name }}</a>{% endif %}</small>
+        {% if entry.detail %}<details><summary>Event details</summary><pre>{{ entry.formatted }}</pre></details>{% endif %}
+      </div>
+      <time datetime="{{ entry.created_at|date:'c' }}">{{ entry.created_at|date:"M j, H:i T" }}</time>
+    </li>
+    {% empty %}<li>No workspace activity yet.</li>{% endfor %}
+  </ol>
+</section>
 {% endblock %}

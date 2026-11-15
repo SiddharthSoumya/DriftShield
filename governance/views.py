@@ -28,6 +28,10 @@ from .domain import Conflict, INCIDENT_LABELS, approve, audit, notify
 from .github import CollectionError, FIELDS, GitHub, cipher, repo_name, signing_key
 from .pilot import activation_required, health_payload
 from .models import Audit, Baseline, Incident, Integration, LoginAttempt, Membership, Monitor, Notification, Scan, WorkerHealth, Workspace
+from .worker import claim, scan_claimed
+
+
+GITHUB_HEARTBEAT_MINUTES = 5
 
 
 def login_client(request):
@@ -137,15 +141,39 @@ def state(monitor, now):
     return "Matches baseline", "good"
 
 
+def github_worker_status(now):
+    heartbeat = WorkerHealth.objects.filter(name="github").values_list("updated_at", flat=True).first()
+    healthy = heartbeat is not None and now - heartbeat < timedelta(minutes=GITHUB_HEARTBEAT_MINUTES)
+    return {"heartbeat": heartbeat, "healthy": healthy}
+
+
+def scan_status(monitor, worker_healthy, now):
+    if monitor.paused:
+        return "Paused", "muted"
+    if monitor.lease_until and monitor.lease_until > now:
+        return "Scan in progress", "info"
+    if monitor.last_error:
+        return ("Retry scheduled", "danger") if monitor.next_scan > now else ("Retry overdue", "danger")
+    if monitor.next_scan > now:
+        return "Scheduled", "muted"
+    if not worker_healthy:
+        return "Waiting for worker", "warning"
+    return "Queued", "info"
+
+
 @member_view()
 def overview(request, member):
     workspace = member.workspace
+    if settings.DS_PILOT_EBS:
+        return redirect("infra", slug=workspace.slug)
     monitors = list(Monitor.objects.filter(workspace=workspace).annotate(
         open_count=Count("incident", filter=Q(incident__closed_at__isnull=True)),
     ).order_by("full_name"))
     now = timezone.now()
+    github_worker = github_worker_status(now)
     for monitor in monitors:
         monitor.state, monitor.tone = state(monitor, now)
+        monitor.scan_state, monitor.scan_tone = scan_status(monitor, github_worker["healthy"], now)
     recent = list(Audit.objects.filter(workspace=workspace).select_related("monitor").order_by("-created_at")[:6])
     for entry in recent:
         entry.label = entry.action.replace("_", " ").capitalize()
@@ -153,9 +181,9 @@ def overview(request, member):
         "workspace": workspace, "member": member, "monitors": monitors,
         "integrated": Integration.objects.filter(workspace=workspace).exists(),
         "incident_count": sum(monitor.open_count for monitor in monitors),
-        "attention_count": sum(monitor.tone in ("danger", "warning") for monitor in monitors),
+        "attention_count": sum(monitor.tone in ("danger", "warning") or monitor.scan_tone == "warning" for monitor in monitors),
         "fresh_count": sum(monitor.tone == "good" for monitor in monitors),
-        "recent": recent,
+        "recent": recent, "github_worker": github_worker,
     })
 
 
@@ -259,7 +287,10 @@ def monitor_detail(request, member, pk):
         scan.label = scan.status.replace("_", " ").capitalize()
     for version in versions:
         version.formatted = json.dumps(version.values, indent=2, ensure_ascii=False)
-    monitor.state, monitor.tone = state(monitor, timezone.now())
+    now = timezone.now()
+    github_worker = github_worker_status(now)
+    monitor.state, monitor.tone = state(monitor, now)
+    monitor.scan_state, monitor.scan_tone = scan_status(monitor, github_worker["healthy"], now)
     rows = [
         {"field": field, "label": label, "expected": format_value(expected.get(field)),
          "observed": format_value(monitor.latest.get(field)), "changed": field in monitor.latest and expected.get(field) != monitor.latest[field]}
@@ -268,6 +299,7 @@ def monitor_detail(request, member, pk):
     return render(request, "monitor.html", {
         "workspace": workspace, "member": member, "monitor": monitor, "rows": rows,
         "incidents": incidents, "scans": scans, "versions": versions,
+        "github_worker": github_worker, "local_scan": settings.DEBUG and not settings.DS_PILOT_EBS,
         "can_approve": bool(monitor.latest) and monitor.tone not in ("muted",) and monitor.state in ("Needs baseline", "Findings open"),
     })
 
@@ -291,22 +323,13 @@ def monitor_action(request, member, pk):
             messages.error(request, "Invalid observation or baseline version.")
         else:
             messages.success(request, "Baseline version recorded.")
+    elif action == "scan":
+        return request_scan(request, member, pk)
     else:
         with transaction.atomic():
             workspace = locked_member(member, "owner", "operator")
             monitor = get_object_or_404(Monitor.objects.select_for_update(), pk=pk, workspace=workspace)
-            if action == "scan":
-                if not monitor.paused and monitor.next_scan > timezone.now() and (
-                    not monitor.last_attempt or timezone.now() - monitor.last_attempt >= timedelta(minutes=2)
-                ) and not monitor.last_error:
-                    monitor.next_scan = timezone.now()
-                    monitor.save(update_fields=["next_scan"])
-                    messages.success(request, "Scan queued.")
-                elif monitor.last_error:
-                    messages.info(request, "The worker will retry at the scheduled time.")
-                else:
-                    messages.info(request, "A scan is queued, was recently attempted, or monitoring is paused.")
-            elif action in ("pause", "resume"):
+            if action in ("pause", "resume"):
                 monitor.paused = action == "pause"
                 monitor.lease = monitor.lease_until = None
                 if not monitor.paused:
@@ -327,6 +350,51 @@ def monitor_action(request, member, pk):
                     audit(workspace, request.user.username, "incident_acknowledged", monitor, incident=incident.pk)
             else:
                 return HttpResponse("Unknown monitor action.", status=400)
+    return redirect("monitor", slug=workspace.slug, pk=pk)
+
+
+def request_scan(request, member, pk):
+    """Schedule a scan, or claim and complete it immediately in local mode."""
+    if settings.DS_PILOT_EBS:
+        raise Http404
+    local_scan = settings.DEBUG
+    claimed = None
+    with transaction.atomic():
+        workspace = locked_member(member, "owner", "operator")
+        monitor = get_object_or_404(Monitor.objects.select_for_update(), pk=pk, workspace=workspace)
+        now = timezone.now()
+        if monitor.paused:
+            messages.info(request, "Monitoring is paused. Resume scans to continue.")
+        elif monitor.lease_until and monitor.lease_until > now:
+            messages.info(request, "A scan is already in progress.")
+        elif monitor.last_error and monitor.next_scan > now:
+            messages.info(request, "The last scan failed. The retry is scheduled for the time shown below.")
+        elif monitor.last_attempt and now - monitor.last_attempt < timedelta(minutes=2) and not monitor.last_error:
+            messages.info(request, "A scan just finished. Try again in two minutes.")
+        else:
+            queued = monitor.next_scan <= now
+            if not queued:
+                monitor.next_scan = now
+                monitor.save(update_fields=["next_scan"])
+            if local_scan:
+                claimed = claim(Monitor.objects.filter(workspace=workspace, pk=pk))
+                if claimed is None:
+                    messages.info(request, "A scan is already in progress.")
+            elif not github_worker_status(now)["healthy"]:
+                messages.warning(request, "Scan queued. The GitHub scan worker has not checked in recently.")
+            else:
+                messages.success(request, "Scan already queued." if queued else "Scan queued.")
+
+    if claimed is not None:
+        with httpx.Client(timeout=httpx.Timeout(8, connect=4), follow_redirects=False, trust_env=False) as client:
+            completed = scan_claimed(GitHub(client), claimed)
+        if completed:
+            if Monitor.objects.filter(pk=pk, last_error="").exists():
+                messages.success(request, "Scan finished. The latest observation is available below.")
+            else:
+                messages.error(request, "GitHub collection failed. See the error and retry time below.")
+        else:
+            messages.info(request, "This scan was superseded before its result could be saved.")
     return redirect("monitor", slug=workspace.slug, pk=pk)
 
 
@@ -380,10 +448,11 @@ def settings_view(request, member):
                     else:
                         pending.delete()
                 workspace.recipient, workspace.retention_days = recipient, days
-                workspace.require_private = request.POST.get("private") == "1"
-                workspace.require_signatures = request.POST.get("signatures") == "1"
-                workspace.min_reviews = reviews
-                workspace.digest_weekly = request.POST.get("digest") == "1"
+                if not settings.DS_PILOT_EBS:
+                    workspace.require_private = request.POST.get("private") == "1"
+                    workspace.require_signatures = request.POST.get("signatures") == "1"
+                    workspace.min_reviews = reviews
+                    workspace.digest_weekly = request.POST.get("digest") == "1"
                 workspace.infra_high_priority_only = request.POST.get("infra_high_only") == "1"
                 workspace.save(update_fields=["recipient", "retention_days", "require_private", "require_signatures", "min_reviews", "digest_weekly", "infra_high_priority_only"])
                 audit(workspace, request.user.username, "workspace_settings_updated", retention=days, email_enabled=bool(recipient), min_reviews=reviews,
@@ -475,7 +544,7 @@ def health(request):
 
 @member_view("owner")
 def worker_health(request, member):
-    thresholds = {"worker": 5, "email": 5, "github": 5, "freshness": 5, "retention": 90}
+    thresholds = {"worker": 5, "email": 5, "github": GITHUB_HEARTBEAT_MINUTES, "freshness": 5, "retention": 90}
     if settings.DS_PILOT_EBS:
         del thresholds["github"]
     updated = dict(WorkerHealth.objects.filter(name__in=thresholds).values_list("name", "updated_at"))

@@ -7,6 +7,7 @@ import httpx
 from cryptography.hazmat.primitives.asymmetric import rsa
 from django.contrib.auth import get_user_model
 from django.core import mail
+from django.core.management import call_command
 from django.db import close_old_connections, connection
 from django.test import Client, TestCase, TransactionTestCase, override_settings
 from django.urls import reverse
@@ -15,7 +16,7 @@ from django.utils import timezone
 from .domain import Conflict, approve, complete_scan
 from .github import CollectionError, FIELDS, GitHub, app_jwt, normalize_rules
 from .models import Audit, Baseline, Incident, Membership, Monitor, Notification, Scan, Workspace
-from .worker import check_overdue, claim, deliver_one, prune, scan_one, weekly_digests
+from .worker import check_overdue, claim, deliver_one, heartbeat, prune, scan_one, weekly_digests
 
 
 VALUES = {"visibility": "private", "default_branch": "main", "archived": False, "rules": []}
@@ -64,8 +65,6 @@ class WorkflowTests(TestCase):
         self.assertEqual(csrf.post(url, {"action": "pause"}).status_code, 403)
 
     def test_worker_health_detects_failed_stage(self):
-        from .worker import heartbeat
-
         url = reverse("worker_health", args=["pilot"])
         for stage in ("worker", "email", "github", "freshness"):
             heartbeat(stage)
@@ -101,6 +100,111 @@ class WorkflowTests(TestCase):
         self.observe(VALUES)
         incident.refresh_from_db()
         self.assertEqual(incident.resolution, "restored")
+
+    @override_settings(DEBUG=True)
+    def test_local_scan_collects_first_observation_without_worker(self):
+        action = reverse("monitor_action", args=["pilot", self.monitor.pk])
+        with patch("governance.views.GitHub") as github:
+            github.return_value.snapshot.return_value = (123, "example/api", VALUES)
+            response = self.client.post(action, {"action": "scan"}, follow=True)
+            github.return_value.snapshot.assert_called_once()
+        self.assertContains(response, "Scan finished")
+        self.assertContains(response, "Approve selected settings")
+        self.assertContains(response, "Scan now")
+        self.monitor.refresh_from_db()
+        self.assertEqual(self.monitor.latest, VALUES)
+        self.assertIsNone(self.monitor.lease)
+        self.assertEqual(Scan.objects.count(), 1)
+        self.other_monitor.refresh_from_db()
+        self.assertIsNone(self.other_monitor.last_attempt)
+
+    @override_settings(DEBUG=True)
+    def test_local_scan_reports_failure_and_respects_backoff(self):
+        action = reverse("monitor_action", args=["pilot", self.monitor.pk])
+        with patch("governance.views.GitHub") as github:
+            github.return_value.snapshot.side_effect = CollectionError("GitHub rate limited collection", 86400)
+            response = self.client.post(action, {"action": "scan"}, follow=True)
+            self.assertContains(response, "GitHub collection failed")
+            self.assertContains(response, "Retry scheduled")
+            self.assertContains(response, "No successful scan")
+            response = self.client.post(action, {"action": "scan"}, follow=True)
+            self.assertContains(response, "The last scan failed.")
+            github.return_value.snapshot.assert_called_once()
+        self.assertEqual(Scan.objects.get().status, "error")
+        self.monitor.refresh_from_db()
+        self.assertGreaterEqual(self.monitor.next_scan - self.monitor.last_attempt, timedelta(days=1))
+
+    @override_settings(DEBUG=True)
+    def test_local_scan_respects_role_and_active_lease(self):
+        action = reverse("monitor_action", args=["pilot", self.monitor.pk])
+        lease = uuid.uuid4()
+        Monitor.objects.filter(pk=self.monitor.pk).update(lease=lease, lease_until=timezone.now() + timedelta(minutes=1))
+        with patch("governance.views.GitHub") as github:
+            response = self.client.post(action, {"action": "scan"}, follow=True)
+            self.assertContains(response, "A scan is already in progress.")
+            self.client.force_login(self.viewer)
+            self.assertEqual(self.client.post(action, {"action": "scan"}).status_code, 403)
+            github.assert_not_called()
+        self.monitor.refresh_from_db()
+        self.assertEqual(self.monitor.lease, lease)
+        self.assertFalse(Scan.objects.exists())
+
+    @override_settings(DEBUG=True)
+    def test_local_scan_does_not_run_when_paused_or_recent(self):
+        action = reverse("monitor_action", args=["pilot", self.monitor.pk])
+        Monitor.objects.filter(pk=self.monitor.pk).update(paused=True)
+        with patch("governance.views.GitHub") as github:
+            self.assertContains(self.client.post(action, {"action": "scan"}, follow=True), "Monitoring is paused.")
+            Monitor.objects.filter(pk=self.monitor.pk).update(paused=False, last_attempt=timezone.now())
+            self.assertContains(self.client.post(action, {"action": "scan"}, follow=True), "A scan just finished.")
+            github.assert_not_called()
+        self.assertFalse(Scan.objects.exists())
+
+    def test_queued_scan_is_processed_by_worker(self):
+        monitor_url = reverse("monitor", args=["pilot", self.monitor.pk])
+        action = reverse("monitor_action", args=["pilot", self.monitor.pk])
+        self.assertContains(self.client.get(monitor_url), "Waiting for worker")
+        self.assertContains(self.client.get(monitor_url), "No check-in yet")
+        heartbeat("github")
+        self.assertContains(self.client.get(monitor_url), "Recent check-in")
+        Monitor.objects.exclude(pk=self.monitor.pk).update(paused=True)
+        Monitor.objects.filter(pk=self.monitor.pk).update(next_scan=timezone.now() + timedelta(minutes=20))
+        with patch("governance.views.GitHub") as web_github:
+            self.assertContains(self.client.post(action, {"action": "scan"}, follow=True), "Scan queued.")
+            web_github.assert_not_called()
+        self.assertFalse(Scan.objects.exists())
+        with (
+            patch("governance.management.commands.work.GitHub") as worker_github,
+            patch("governance.management.commands.work.close_old_connections"),
+            patch("governance.management.commands.work.signal.signal"),
+        ):
+            worker_github.return_value.snapshot.return_value = (123, "example/api", VALUES)
+            call_command("work", once=True)
+            worker_github.return_value.snapshot.assert_called_once()
+        self.assertContains(self.client.get(monitor_url), "Approve selected settings")
+        self.assertEqual(Scan.objects.get().status, "unbaselined")
+
+    @override_settings(DEBUG=True, DS_PILOT_EBS=True, DS_PILOT_STAGING=True, DS_PILOT_WORKSPACE="pilot")
+    def test_ebs_mode_prioritizes_targets_and_has_no_local_github_scan(self):
+        response = self.client.get(reverse("overview", args=["pilot"]))
+        self.assertRedirects(response, reverse("infra", args=["pilot"]))
+        self.assertContains(self.client.get(response["Location"]), "AWS EBS monitoring")
+        self.assertNotContains(self.client.get(response["Location"]), ">Repositories</a>")
+        with patch("governance.views.GitHub") as github:
+            response = self.client.post(reverse("monitor_action", args=["pilot", self.monitor.pk]), {"action": "scan"})
+            self.assertEqual(response.status_code, 404)
+            github.assert_not_called()
+        settings_url = reverse("settings", args=["pilot"])
+        self.assertNotContains(self.client.get(settings_url), "Repository policies")
+        self.assertContains(self.client.get(settings_url), "Mailbox verification")
+        Workspace.objects.filter(pk=self.workspace.pk).update(require_private=True, min_reviews=2, digest_weekly=True)
+        response = self.client.post(settings_url, {"retention": "60", "recipient": "dev@example.test"})
+        self.assertRedirects(response, settings_url)
+        self.workspace.refresh_from_db()
+        self.assertEqual(self.workspace.retention_days, 60)
+        self.assertTrue(self.workspace.require_private)
+        self.assertEqual(self.workspace.min_reviews, 2)
+        self.assertTrue(self.workspace.digest_weekly)
 
     def test_selective_baseline_retains_unapproved_drift(self):
         self.baseline()

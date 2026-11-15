@@ -63,7 +63,11 @@ def overview(request, member):
                                      if target.profile == Target.Profile.EBS_PILOT else status(target, now))
     return render(request, "infra_overview.html", {
         "workspace": member.workspace, "member": member, "targets": targets, "platforms": Target.PLATFORMS, "pilot_enabled": settings.DS_PILOT_EBS, "archived": archived,
-        "pilot_fenced": settings.DS_PILOT_RECOVERY_FENCED,
+        "pilot_fenced": settings.DS_PILOT_EBS and (
+            settings.DS_PILOT_RECOVERY_FENCED or activation_required(member.workspace_id)
+        ),
+        "target_attention_count": sum(target.tone in ("warning", "danger") for target in targets),
+        "target_open_count": sum(target.open_count for target in targets),
     })
 
 
@@ -240,6 +244,7 @@ def detail(request, member, pk):
         workspace=member.workspace, role__in=("owner", "operator"), user__is_active=True,
     ).select_related("user").order_by("user__username"))
     now = timezone.now()
+    pilot_fenced = pilot and (settings.DS_PILOT_RECOVERY_FENCED or activation_required(member.workspace_id))
     target.label, target.tone = pilot_intake.display_state(target, now) if pilot else status(target, now)
     for finding in active:
         finding.pilot_review = review_by_finding.get(finding.pk)
@@ -264,8 +269,8 @@ def detail(request, member, pk):
         "endpoint": settings.APP_ORIGIN + reverse("infra_ingest_v2" if pilot else "infra_ingest", args=[pk]),
         "pilot": pilot, "enrollment": enrollment, "gaps": gaps, "approvals": approvals,
         "pilot_complete": pilot and pilot_intake.coverage_state(target, now) == "complete",
-        "recovery_fenced": settings.DS_PILOT_EBS and settings.DS_PILOT_RECOVERY_FENCED,
-        "pilot_writable": settings.DS_PILOT_EBS and not settings.DS_PILOT_RECOVERY_FENCED and not getattr(target, "retired_at", None),
+        "recovery_fenced": pilot_fenced,
+        "pilot_writable": pilot and settings.DS_PILOT_EBS and not pilot_fenced and not target.retired_at,
         "deadline": pilot_intake.deadline(target, enrollment) if enrollment else None,
         "operators": operators, "exceptions": exceptions, "events": events,
     })
